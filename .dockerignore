@@ -1,0 +1,6 @@
+.git
+node_modules
+apps/*/node_modules
+apps/frontend/.next
+apps/backend/dist
+.env*

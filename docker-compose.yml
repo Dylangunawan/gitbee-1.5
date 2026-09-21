@@ -1,0 +1,56 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: gitbee-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_DATABASE: gitbee
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    container_name: gitbee-backend
+    restart: unless-stopped
+    ports:
+      - "5001:5000"
+    # ponytail: seed is destructive (deleteMany + AUTO_INCREMENT reset), so it
+    # runs only when SEED_ON_BOOT=true. First boot: SEED_ON_BOOT=true docker compose up backend
+    command: >
+      sh -c "cd /repo/apps/backend/api
+      && pnpm exec prisma db push
+      && pnpm exec prisma generate
+      && if [ \"$$SEED_ON_BOOT\" = \"true\" ]; then pnpm exec prisma db seed; fi
+      && pnpm --filter gitbee_backend dev"
+    environment:
+      DATABASE_URL: "mysql://root:admin@mysql:3306/gitbee"
+      WEB_URL: "http://localhost:8000"
+      JWT_SECRET: "change-me"
+      PORT: "5000"
+      SEED_ON_BOOT: "${SEED_ON_BOOT:-false}"
+    depends_on:
+      - mysql
+    volumes:
+      - ./apps/backend:/app
+      - /app/node_modules
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_API: "http://localhost:5001/api/"
+    container_name: gitbee-frontend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
