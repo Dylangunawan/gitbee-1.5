@@ -8,9 +8,9 @@
       "esModuleInterop": true,
       "forceConsistentCasingInFileNames": true,
       "skipLibCheck": true,
-      "strict": false,
+      "baseUrl": ".",
       "paths": {
-        "api/*": ["./api/*"]
+        "api/*": ["api/*"]
       }
   },
   "ts-node": {

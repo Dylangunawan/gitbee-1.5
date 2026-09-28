@@ -1,4 +1,3 @@
-require("module-alias/register");
 import express from "express";
 import dotenv from "dotenv";
 import routes from "./routes/Routes";
