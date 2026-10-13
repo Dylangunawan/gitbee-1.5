@@ -13,6 +13,7 @@ import classRoutes from "./class/classRoutes.js";
 import reviewedProjectRoutes from "./reviewedProject/reviewedProjectRoutes.js";
 import outstandingProjectRoutes from "./outstandingProject/outstandingProjectRoutes.js";
 import deadlineRoutes from "./deadline/deadlineRoutes.js";
+import adminCsvUploadRoutes from "./adminCsvUploadRoutes.js";
 
 const routes = express.Router();
 
@@ -37,5 +38,6 @@ routes.use("/major", majorRoutes);
 routes.use("/group", groupRoutes);
 routes.use("/assessment", assessmentRoutes);
 routes.use("/deadline", deadlineRoutes);
+routes.use("/admin/users", adminCsvUploadRoutes);
 
 export default routes;

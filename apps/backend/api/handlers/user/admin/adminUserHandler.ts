@@ -229,6 +229,20 @@ export default class AdminUserHandler {
     }
   }
 
+  static handleCsvUpload(req: Request, res: Response) {
+    const file = req.file;
+    if (!file) {
+      return sendErrorResponse(res, "No file uploaded", 400);
+    }
+
+    return sendSuccessResponse(res, {
+      filename: file.originalname,
+      size: file.size,
+      mimetype: file.mimetype,
+      bufferReady: Buffer.isBuffer(file.buffer),
+    });
+  }
+
   static async uploadUserExcel(req: Request, res: Response) {
     try {
       if (!req.file) {
