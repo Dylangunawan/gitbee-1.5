@@ -37,6 +37,8 @@ export default class AdminUserHandler {
         ? {
             OR: [
               { lecturer_code: { contains: params.search } },
+              { student_id: { contains: params.search } },
+              { binusian_id: { contains: params.search } },
               { email: { contains: params.search } },
               { name: { contains: params.search } },
             ],
@@ -287,7 +289,11 @@ export default class AdminUserHandler {
     try {
       const deletedUsers = await prisma.user.deleteMany({
         where: {
-          NOT: [{ role: "Admin" }, { role: "SCC" }, { role: "HoP" }],
+          role: "Lecturer",
+          // Keep accounts that authHandler treats as students. user_type is
+          // nullable, so NULL must be matched explicitly: in SQL, NOT
+          // (user_type = 'student') is NULL (and thus excluded) when user_type IS NULL.
+          OR: [{ user_type: null }, { user_type: { not: "student" } }],
         },
       });
 
