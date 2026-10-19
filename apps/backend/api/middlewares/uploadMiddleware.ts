@@ -4,6 +4,10 @@ import path from "node:path";
 import { sendErrorResponse } from "../utils/response/response.js";
 
 class InvalidCsvFileTypeError extends Error {}
+class InvalidCsvEncodingError extends Error {}
+
+const invalidCsvEncodingMessage =
+  "File must be UTF-8 encoded (in Excel, Save As 'CSV UTF-8')";
 
 const nonCsvFileSignatures = [
   Buffer.from("%PDF-"),
@@ -37,7 +41,7 @@ const isCsvContent = (buffer: Buffer): boolean => {
   try {
     content = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   } catch {
-    return false;
+    throw new InvalidCsvEncodingError(invalidCsvEncodingMessage);
   }
 
   for (let index = 0; index < content.length; index += 1) {
@@ -125,8 +129,22 @@ const uploadSingleCsv = multer({
 export const uploadCsv: RequestHandler = (req, res, next) => {
   uploadSingleCsv(req, res, (error: unknown) => {
     if (!error) {
-      if (req.file && !isCsvContent(req.file.buffer)) {
-        sendErrorResponse(res, "Only CSV files are allowed.", 400);
+      if (req.file && (req.file.size === 0 || req.file.buffer.length === 0)) {
+        sendErrorResponse(res, "CSV file cannot be empty", 400);
+        return;
+      }
+
+      try {
+        if (req.file && !isCsvContent(req.file.buffer)) {
+          sendErrorResponse(res, "Only CSV files are allowed.", 400);
+          return;
+        }
+      } catch (validationError) {
+        if (validationError instanceof InvalidCsvEncodingError) {
+          sendErrorResponse(res, validationError.message, 400);
+          return;
+        }
+        next(validationError);
         return;
       }
 

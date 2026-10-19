@@ -1,5 +1,6 @@
 import express from "express";
 import AdminUserHandler from "../../../handlers/user/admin/adminUserHandler.js";
+import { AuthMiddleware } from "../../../middlewares/authMiddleware.js";
 import { RoleMiddleware } from "../../../middlewares/roleMiddleware.js";
 import { uploadCsv } from "../../../middlewares/uploadMiddleware.js";
 import multer from "multer";
@@ -10,7 +11,20 @@ const adminUserRoutes = express.Router();
 adminUserRoutes.get("/get-user", AdminUserHandler.getUser);
 adminUserRoutes.post("/insert-user", AdminUserHandler.insertUser);
 adminUserRoutes.patch("/update-role", AdminUserHandler.updateRole);
-adminUserRoutes.post("/upload", RoleMiddleware("Admin"), uploadCsv, AdminUserHandler.handleCsvUpload);
+adminUserRoutes.post(
+  "/upload-student-csv",
+  AuthMiddleware(),
+  RoleMiddleware("Admin"),
+  uploadCsv,
+  AdminUserHandler.handleStudentCsvUpload
+);
+adminUserRoutes.post(
+  "/upload-staff-csv",
+  AuthMiddleware(),
+  RoleMiddleware("Admin"),
+  uploadCsv,
+  AdminUserHandler.handleStaffCsvUpload
+);
 adminUserRoutes.post("/upload-user-excel", upload.single("file"), AdminUserHandler.uploadUserExcel);
 adminUserRoutes.patch("/remove-user-excel", AdminUserHandler.removeUserExcel);
 

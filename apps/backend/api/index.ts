@@ -29,8 +29,8 @@ app.set('query parser', function (str: string) {
   return qs.parse(str)
 })
 
+app.use("/api", routes)
+
 app.listen(port, () => {
   console.log(`Application is running on port ${port}.`);
 });
-
-app.use("/api", routes)

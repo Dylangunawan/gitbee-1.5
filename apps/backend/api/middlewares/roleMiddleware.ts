@@ -3,34 +3,46 @@ import { verifyToken } from "../utils/auth/auth.js";
 import { sendErrorResponse } from "../utils/response/response.js";
 
 export const RoleMiddleware = (requiredRole: string) => {
-    return (req: Request, res: Response, next: NextFunction) => {
-        const cookieName = process.env.COOKIE_NAME;
-        const cookieToken = cookieName ? req.cookies?.[cookieName] : undefined;
-        const authorization = req.get("authorization");
-        const bearerToken = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
-        const token = cookieToken || bearerToken;
+  return (req: Request, res: Response, next: NextFunction) => {
+    const cookieName = process.env.COOKIE_NAME;
+    const cookieToken = cookieName ? req.cookies?.[cookieName] : undefined;
+    const authorization = req.get("authorization");
+    const bearerToken = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    const token = cookieToken || bearerToken;
 
-        if (!token) {
-            return sendErrorResponse(res, "Unauthorized", 401);
-        }
-          
-        const verify = verifyToken(token);
-        if (!verify.status || !verify.data) {
-            return sendErrorResponse(res, "Forbidden", 401);
-        }
-
-        const role =
-            typeof verify.data === "object" && "role" in verify.data
-                ? verify.data.role
-                : undefined;
-        const hasRequiredRole = Array.isArray(role)
-            ? role.includes(requiredRole)
-            : role === requiredRole;
-
-        if (!hasRequiredRole) {
-            return sendErrorResponse(res, "Forbidden", 403);
-        }
-          
-        next();
+    if (!token) {
+      return sendErrorResponse(res, "Unauthorized", 401);
     }
-}
+
+    const verify = verifyToken(token);
+    if (!verify.status || !verify.data) {
+      return sendErrorResponse(res, "Forbidden", 401);
+    }
+
+    const roles: unknown[] = [];
+    if (typeof verify.data === "object" && verify.data !== null) {
+      if ("role" in verify.data) {
+        roles.push(verify.data.role);
+      }
+      if ("roles" in verify.data) {
+        roles.push(verify.data.roles);
+      }
+    }
+
+    const matchesRole = (value: unknown): boolean => {
+      if (Array.isArray(value)) {
+        return value.some(matchesRole);
+      }
+      if (typeof value === "string") {
+        return value.split(/[,\s]+/).includes(requiredRole);
+      }
+      return false;
+    };
+
+    if (!roles.some(matchesRole)) {
+      return sendErrorResponse(res, "Forbidden", 403);
+    }
+
+    next();
+  };
+};

@@ -231,7 +231,7 @@ export default class AdminUserHandler {
     }
   }
 
-  static handleCsvUpload(req: Request, res: Response) {
+  private static handleCsvUpload(req: Request, res: Response) {
     const file = req.file;
     if (!file) {
       return sendErrorResponse(res, "No file uploaded", 400);
@@ -243,6 +243,14 @@ export default class AdminUserHandler {
       mimetype: file.mimetype,
       bufferReady: Buffer.isBuffer(file.buffer),
     });
+  }
+
+  static handleStudentCsvUpload(req: Request, res: Response) {
+    return AdminUserHandler.handleCsvUpload(req, res);
+  }
+
+  static handleStaffCsvUpload(req: Request, res: Response) {
+    return AdminUserHandler.handleCsvUpload(req, res);
   }
 
   static async uploadUserExcel(req: Request, res: Response) {
