@@ -145,6 +145,32 @@ describe("POST /api/user/admin/upload", () => {
     assert.equal(response.body.errors, "Only CSV files are allowed.");
   });
 
+  it("rejects PDF content even when the filename and MIME type claim CSV", async () => {
+    const response = await request(app)
+      .post("/api/user/admin/upload")
+      .attach("file", Buffer.from("%PDF-1.7\n1 0 obj\n"), {
+        filename: "report.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.errors, "Only CSV files are allowed.");
+  });
+
+  it("rejects malformed CSV quoting", async () => {
+    const response = await request(app)
+      .post("/api/user/admin/upload")
+      .attach("file", Buffer.from('name,email\n"Ada,ada@example.com\n'), {
+        filename: "users.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.errors, "Only CSV files are allowed.");
+  });
+
   it("returns 413 when the file exceeds 5MB", async () => {
     const response = await request(app)
       .post("/api/user/admin/upload")
