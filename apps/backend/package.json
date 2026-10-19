@@ -10,7 +10,7 @@
     "build:watch": "tsc -w",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "tsx --test tests/adminCsvUpload.test.ts",
+    "test": "tsx --test tests/**/*.test.ts",
     "start": "node dist/index.js",
     "dev": "pnpm prisma:generate && tsx watch ./api/index.ts",
     "postinstall": "pnpm prisma:generate"

@@ -8,6 +8,10 @@ class InvalidCsvFileTypeError extends Error {}
 const allowedMimeTypes = new Set([
   "text/csv",
   "application/vnd.ms-excel",
+  "text/plain",
+  "application/csv",
+  "text/x-csv",
+  "application/octet-stream",
 ]);
 
 const uploadSingleCsv = multer({
@@ -15,12 +19,12 @@ const uploadSingleCsv = multer({
   fileFilter: (_req, file, callback) => {
     const hasCsvExtension =
       path.extname(file.originalname).toLowerCase() === ".csv";
-    if (allowedMimeTypes.has(file.mimetype) || hasCsvExtension) {
-      callback(null, true);
+    if (!hasCsvExtension || !allowedMimeTypes.has(file.mimetype)) {
+      callback(new InvalidCsvFileTypeError("Only CSV files are allowed."));
       return;
     }
 
-    callback(new InvalidCsvFileTypeError("Only CSV files are allowed."));
+    callback(null, true);
   },
   limits: { fileSize: 5 * 1024 * 1024 },
 }).single("file");
