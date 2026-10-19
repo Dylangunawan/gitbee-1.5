@@ -18,7 +18,15 @@ const authToken = createToken(
   "test-user",
   "Test User",
   "test@example.com",
-  ["admin"],
+  ["Admin"],
+  ""
+).token;
+const studentToken = createToken(
+  "student-user",
+  "student-user",
+  "Student User",
+  "student@example.com",
+  ["Student"],
   ""
 ).token;
 
@@ -92,6 +100,14 @@ describe("POST /api/user/admin/upload", () => {
     const response = await request(app).post("/api/user/admin/upload");
 
     assert.equal(response.status, 401);
+  });
+
+  it("returns 403 when the authenticated user is not an admin", async () => {
+    const response = await request(app)
+      .post("/api/user/admin/upload")
+      .set("Cookie", `${process.env.COOKIE_NAME}=${studentToken}`);
+
+    assert.equal(response.status, 403);
   });
 
   it("accepts a bearer token when the auth cookie is absent", async () => {
