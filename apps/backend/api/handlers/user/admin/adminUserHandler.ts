@@ -9,6 +9,10 @@ import {
 import { prisma } from "../../../prisma/client.js";
 import xlsx from "xlsx";
 import SemesterService from "../../../services/semester/semesterService.js";
+import {
+  parseAndValidateCsvBuffer,
+  type CsvUploadType,
+} from "../../../utils/csv/csvParser.js";
 
 interface AtlantisSemester {
   Description: string;
@@ -231,26 +235,55 @@ export default class AdminUserHandler {
     }
   }
 
-  private static handleCsvUpload(req: Request, res: Response) {
+  private static async handleCsvUpload(
+    req: Request,
+    res: Response,
+    uploadType: CsvUploadType
+  ) {
     const file = req.file;
     if (!file) {
       return sendErrorResponse(res, "No file uploaded", 400);
     }
 
-    return sendSuccessResponse(res, {
-      filename: file.originalname,
-      size: file.size,
-      mimetype: file.mimetype,
-      bufferReady: Buffer.isBuffer(file.buffer),
-    });
+    try {
+      const result = await parseAndValidateCsvBuffer(file.buffer, uploadType);
+      if (result.validRows.length === 0) {
+        return sendErrorResponse(
+          res,
+          {
+            message: "No valid rows found in the CSV file.",
+            totalParsed: result.totalParsed,
+            validCount: 0,
+            errorCount: result.errors.length,
+            validRows: result.validRows,
+            errors: result.errors,
+          },
+          400
+        );
+      }
+
+      return sendSuccessResponse(res, {
+        totalParsed: result.totalParsed,
+        validCount: result.validRows.length,
+        errorCount: result.errors.length,
+        validRows: result.validRows,
+        errors: result.errors,
+      });
+    } catch (error) {
+      return sendErrorResponse(
+        res,
+        getErrorMessage(error, "Failed to parse CSV file."),
+        400
+      );
+    }
   }
 
-  static handleStudentCsvUpload(req: Request, res: Response) {
-    return AdminUserHandler.handleCsvUpload(req, res);
+  static async handleStudentCsvUpload(req: Request, res: Response) {
+    return AdminUserHandler.handleCsvUpload(req, res, "student");
   }
 
-  static handleStaffCsvUpload(req: Request, res: Response) {
-    return AdminUserHandler.handleCsvUpload(req, res);
+  static async handleStaffCsvUpload(req: Request, res: Response) {
+    return AdminUserHandler.handleCsvUpload(req, res, "staff");
   }
 
   static async uploadUserExcel(req: Request, res: Response) {
