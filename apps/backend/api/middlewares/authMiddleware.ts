@@ -5,23 +5,17 @@ import { sendErrorResponse } from "../utils/response/response.js";
 export const AuthMiddleware = () => {
     return (req: Request, res: Response, next: NextFunction) => {
         const cookieName = process.env.COOKIE_NAME;
-        if (!cookieName) {
-            return sendErrorResponse(res, "Cookie name is not configured", 500);
-        }
-        const cookies = req.cookies;
-        const token = cookies[cookieName];
+        const cookieToken = cookieName ? req.cookies?.[cookieName] : undefined;
+        const authorization = req.get("authorization");
+        const bearerToken = authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
+        const token = cookieToken || bearerToken;
+
         if (!token) {
-            return sendErrorResponse(res, "Cookie not found", 401);
+            return sendErrorResponse(res, "Unauthorized", 401);
         }
           
         const verify = verifyToken(token);
-        if (!verify.status) {
-            return sendErrorResponse(res, "Forbidden", 401);
-        }
-          
-        const data = verify.data;
-          
-        if (!data) {
+        if (!verify.status || !verify.data) {
             return sendErrorResponse(res, "Forbidden", 401);
         }
 
