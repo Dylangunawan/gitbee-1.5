@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { parse } from "csv-parse";
+import { parse, type InfoRecord } from "csv-parse";
 import { z } from "zod";
 
 export type CsvUploadType = "student" | "staff";
@@ -65,6 +65,16 @@ export interface CsvValidationResult {
   errors: CsvRowError[];
 }
 
+function getRecordStartLine(info: InfoRecord): number {
+  const recordContent = info.raw
+    ?.replace(/^(?:(?:\r\n|\r|\n))+/, "")
+    .replace(/(?:(?:\r\n|\r|\n))+$/, "");
+  const embeddedLineBreaks =
+    recordContent?.match(/\r\n|\r|\n/g)?.length ?? 0;
+
+  return info.lines - embeddedLineBreaks;
+}
+
 export async function parseAndValidateCsvBuffer(
   buffer: Buffer,
   uploadType: CsvUploadType
@@ -82,27 +92,33 @@ export async function parseAndValidateCsvBuffer(
 
   const parser = parse({
     bom: true,
-    cast: (value) => value.replace(/\uFEFF/g, "").trim(),
+    cast: (value) => value.replace(/\uFEFF/g, ""),
     columns: (rawHeaders) => {
       headers = rawHeaders.map((header) =>
-        header.replace(/\uFEFF/g, "").trim()
+        header.replace(/\uFEFF/g, "")
       );
       return headers;
     },
+    info: true,
+    raw: true,
     relax_column_count: false,
     skip_empty_lines: true,
     trim: true,
   });
 
   const rows = Readable.from([buffer]).pipe(parser);
-  for await (const row of rows) {
+  for await (const parsedRow of rows) {
+    const { record, info } = parsedRow as {
+      record: Record<string, unknown>;
+      info: InfoRecord;
+    };
     totalParsed += 1;
-    const parsed = rowSchema.safeParse(row);
+    const parsed = rowSchema.safeParse(record);
     if (parsed.success) {
       validRows.push(parsed.data);
     } else {
       errors.push({
-        line: totalParsed + 1,
+        line: getRecordStartLine(info),
         errors: parsed.error.issues.map((issue) => {
           const field = issue.path.join(".");
           return field ? `${field}: ${issue.message}` : issue.message;

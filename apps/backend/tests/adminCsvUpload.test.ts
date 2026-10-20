@@ -81,9 +81,8 @@ describe("Admin CSV uploads", () => {
         contentType: "text/csv",
       })
       .set("Cookie", authCookie);
-
     assert.equal(response.status, 200);
-    assert.equal(response.body.data.validRows[0].name, "Ada");
+    assert.equal(response.status, 200);
     assert.deepEqual(response.body.data, {
       totalParsed: 1,
       validCount: 1,
@@ -155,6 +154,48 @@ describe("Admin CSV uploads", () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.data.validCount, 1);
+    assert.equal(response.body.data.validRows[0].lecturer_code, "TY23-1");
+  });
+
+  it("rejects student headers on the staff endpoint", async () => {
+    const response = await request(app)
+      .post(staffCsvPath)
+      .attach("file", Buffer.from(validStudentCsv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.errors, /Missing required CSV columns:/);
+  });
+
+  it("rejects staff headers on the student endpoint", async () => {
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(validStaffCsv), {
+        filename: "staff.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.errors, /Missing required CSV columns:/);
+  });
+
+  it("returns 400 for a header-only CSV with no data rows", async () => {
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(studentHeaders), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.errors.totalParsed, 0);
+    assert.equal(response.body.errors.validCount, 0);
+    assert.equal(response.body.errors.errorCount, 0);
   });
 
   it("returns valid rows and line-specific validation errors", async () => {
