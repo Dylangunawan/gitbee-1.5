@@ -58,6 +58,13 @@ appWithoutCookieParser.use("/api/user/admin", adminUserRoutes);
 const authCookie = `${process.env.COOKIE_NAME}=${authToken}`;
 const studentCsvPath = "/api/user/admin/upload-student-csv";
 const staffCsvPath = "/api/user/admin/upload-staff-csv";
+const studentHeaders = "nim,name,email,binusian_id,major_code,password";
+const staffHeaders =
+  "lecturer_code,name,email,binusian_id,role,major_codes,password";
+const validStudentCsv =
+  `${studentHeaders}\n2501959296,Ada,ada@example.com,B123,COMP,secret\n`;
+const validStaffCsv =
+  `${staffHeaders}\nTY23-1,Ada,ada@example.com,B123,Lecturer,COMP;MATH,secret\n`;
 
 after(async () => {
   const { prisma } = await import("../api/prisma/client.js");
@@ -65,8 +72,8 @@ after(async () => {
 });
 
 describe("Admin CSV uploads", () => {
-  it("accepts a CSV file and confirms its buffer is ready", async () => {
-    const csvBuffer = Buffer.from("name,email\nAda,ada@example.com\n");
+  it("returns the validation summary for a valid CSV file", async () => {
+    const csvBuffer = Buffer.from(validStudentCsv);
     const response = await request(app)
       .post(studentCsvPath)
       .attach("file", csvBuffer, {
@@ -74,13 +81,23 @@ describe("Admin CSV uploads", () => {
         contentType: "text/csv",
       })
       .set("Cookie", authCookie);
-
+    assert.equal(response.status, 200);
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.data, {
-      filename: "users.csv",
-      size: csvBuffer.length,
-      mimetype: "text/csv",
-      bufferReady: true,
+      totalParsed: 1,
+      validCount: 1,
+      errorCount: 0,
+      validRows: [
+        {
+          nim: "2501959296",
+          name: "Ada",
+          email: "ada@example.com",
+          binusian_id: "B123",
+          major_code: "COMP",
+          password: "secret",
+        },
+      ],
+      errors: [],
     });
   });
 
@@ -97,7 +114,7 @@ describe("Admin CSV uploads", () => {
     for (const contentType of mimeTypes) {
       const response = await request(app)
         .post(studentCsvPath)
-        .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+        .attach("file", Buffer.from(validStudentCsv), {
           filename: "users.csv",
           contentType,
         })
@@ -107,10 +124,12 @@ describe("Admin CSV uploads", () => {
     }
   });
 
-  it("accepts uppercase extensions, UTF-8 BOM, and semicolon-delimited CSV", async () => {
+  it("accepts uppercase extensions, UTF-8 BOM, and whitespace around CSV values", async () => {
     const contents = Buffer.concat([
       Buffer.from([0xef, 0xbb, 0xbf]),
-      Buffer.from("name;email\r\nAda;ada@example.com\r\n"),
+      Buffer.from(
+        ` ${studentHeaders} \r\n 2501959296 , Ada , ada@example.com , B123 , COMP , secret \r\n`
+      ),
     ]);
     const response = await request(app)
       .post(studentCsvPath)
@@ -121,19 +140,101 @@ describe("Admin CSV uploads", () => {
       .set("Cookie", authCookie);
 
     assert.equal(response.status, 200);
+    assert.equal(response.body.data.validRows[0].name, "Ada");
   });
 
   it("accepts a staff CSV upload", async () => {
     const response = await request(app)
       .post(staffCsvPath)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStaffCsv), {
         filename: "staff.csv",
         contentType: "text/csv",
       })
       .set("Cookie", authCookie);
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.data.filename, "staff.csv");
+    assert.equal(response.body.data.validCount, 1);
+    assert.equal(response.body.data.validRows[0].lecturer_code, "TY23-1");
+  });
+
+  it("rejects student headers on the staff endpoint", async () => {
+    const response = await request(app)
+      .post(staffCsvPath)
+      .attach("file", Buffer.from(validStudentCsv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.errors, /Missing required CSV columns:/);
+  });
+
+  it("rejects staff headers on the student endpoint", async () => {
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(validStaffCsv), {
+        filename: "staff.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.errors, /Missing required CSV columns:/);
+  });
+
+  it("returns 400 for a header-only CSV with no data rows", async () => {
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(studentHeaders), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.errors.totalParsed, 0);
+    assert.equal(response.body.errors.validCount, 0);
+    assert.equal(response.body.errors.errorCount, 0);
+  });
+
+  it("returns valid rows and line-specific validation errors", async () => {
+    const csv = [
+      studentHeaders,
+      "2501959296,Ada,ada@example.com,B123,COMP,secret",
+      "invalid,Bob,invalid,B123,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "users.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.totalParsed, 2);
+    assert.equal(response.body.data.validCount, 1);
+    assert.equal(response.body.data.errorCount, 1);
+    assert.equal(response.body.data.errors[0].line, 3);
+    assert.match(response.body.data.errors[0].errors[0], /^email:/);
+  });
+
+  it("returns 400 when every data row fails validation", async () => {
+    const csv =
+      `${staffHeaders}\nTY23-1,Ada,invalid-email,B123,Lecturer,COMP;MATH,secret\n`;
+    const response = await request(app)
+      .post(staffCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "staff.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.errors.totalParsed, 1);
+    assert.equal(response.body.errors.errorCount, 1);
+    assert.equal(response.body.errors.errors[0].line, 2);
   });
 
   it("returns 400 when no file is attached", async () => {
@@ -193,14 +294,14 @@ describe("Admin CSV uploads", () => {
     const delimitedRoleResponse = await request(app)
       .post(studentCsvPath)
       .set("Cookie", `${process.env.COOKIE_NAME}=${delimitedRoleToken}`)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStudentCsv), {
         filename: "users.csv",
         contentType: "text/csv",
       });
     const pluralRoleResponse = await request(app)
       .post(staffCsvPath)
       .set("Cookie", `${process.env.COOKIE_NAME}=${pluralAdminToken}`)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStaffCsv), {
         filename: "staff.csv",
         contentType: "text/csv",
       });
@@ -213,14 +314,14 @@ describe("Admin CSV uploads", () => {
     const stringRoleResponse = await request(app)
       .post(studentCsvPath)
       .set("Cookie", `${process.env.COOKIE_NAME}=${adminStringToken}`)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStudentCsv), {
         filename: "users.csv",
         contentType: "text/csv",
       });
     const multiRoleResponse = await request(app)
       .post(studentCsvPath)
       .set("Cookie", `${process.env.COOKIE_NAME}=${studentAndAdminToken}`)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStudentCsv), {
         filename: "users.csv",
         contentType: "text/csv",
       });
@@ -233,7 +334,7 @@ describe("Admin CSV uploads", () => {
     const response = await request(appWithoutCookieParser)
       .post(studentCsvPath)
       .set("Authorization", `Bearer ${authToken}`)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStudentCsv), {
         filename: "users.csv",
         contentType: "text/csv",
       });
@@ -246,7 +347,7 @@ describe("Admin CSV uploads", () => {
       .post(studentCsvPath)
       .set("Cookie", `${process.env.COOKIE_NAME}=`)
       .set("Authorization", `Bearer ${authToken}`)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStudentCsv), {
         filename: "users.csv",
         contentType: "text/csv",
       });
@@ -284,7 +385,7 @@ describe("Admin CSV uploads", () => {
   it("rejects an .xls file reported as an Excel MIME type", async () => {
     const response = await request(app)
       .post(studentCsvPath)
-      .attach("file", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("file", Buffer.from(validStudentCsv), {
         filename: "users.xls",
         contentType: "application/vnd.ms-excel",
       })
@@ -385,7 +486,7 @@ describe("Admin CSV uploads", () => {
   it("returns 400 when the multipart field name is not file", async () => {
     const response = await request(app)
       .post(studentCsvPath)
-      .attach("upload", Buffer.from("name,email\nAda,ada@example.com\n"), {
+      .attach("upload", Buffer.from(validStudentCsv), {
         filename: "users.csv",
         contentType: "text/csv",
       })
@@ -431,7 +532,7 @@ describe("Admin CSV uploads", () => {
     );
   });
 
-  it("accepts a CSV file at the 5MB size limit", async () => {
+  it("does not reject a CSV-sized file at the 5MB limit as too large", async () => {
     const response = await request(app)
       .post(studentCsvPath)
       .attach("file", Buffer.alloc(5 * 1024 * 1024, "a"), {
@@ -440,7 +541,7 @@ describe("Admin CSV uploads", () => {
       })
       .set("Cookie", authCookie);
 
-    assert.equal(response.status, 200);
-    assert.equal(response.body.data.size, 5 * 1024 * 1024);
+    assert.equal(response.status, 400);
+    assert.notEqual(response.status, 413);
   });
 });
