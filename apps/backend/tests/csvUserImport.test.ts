@@ -148,9 +148,67 @@ describe("CSV user import", () => {
       {
         row_number: 2,
         identifier: "2501959296",
-        error: "a user with the same NIM, lecturer code or Binusian ID already exists",
+        error: "a user with the same email, NIM, lecturer code or Binusian ID already exists",
       },
     ]);
+  });
+
+  it("reports HoP rows as failed instead of creating a HoP without majors", async () => {
+    const store = createFakeUserStore();
+    const report = await importCsvUsers(
+      await parseAndValidateCsvBuffer(
+        csv(
+          staffHeaders,
+          "TY23-1,Ada,ada@example.com,B1,Lecturer,COMP,secret",
+          "RA23-1,Roger,roger@example.com,B2,hop,COMP;MATH,secret",
+          "NC23-1,Nick,nick@example.com,B3,SCC,COMP,secret"
+        ),
+        "staff"
+      ),
+      store
+    );
+
+    assert.equal(report.successful_inserts, 2);
+    assert.deepEqual(report.failed_rows, [
+      {
+        row_number: 3,
+        identifier: "RA23-1",
+        error: `major_codes "COMP;MATH" can't be resolved: majors have no codes yet, so HoP accounts can't be imported`,
+      },
+    ]);
+    assert.deepEqual(store.users.map((user) => user.role), ["Lecturer", "SCC"]);
+  });
+
+  it("treats emails that differ only in case as duplicates, like MySQL", async () => {
+    const store = createFakeUserStore([{ email: "Ada@Example.com" }]);
+    const report = await importCsvUsers(
+      await parseAndValidateCsvBuffer(
+        csv(studentHeaders, "2501959296,Ada,ada@example.com,B123,COMP,secret"),
+        "student"
+      ),
+      store
+    );
+
+    assert.deepEqual(report.failed_rows.map((row) => row.error), [
+      'email "ada@example.com" is already in use',
+    ]);
+  });
+
+  it("lets only one of two concurrent imports insert the same email", async () => {
+    const store = createFakeUserStore();
+    const upload = (nim: string) =>
+      parseAndValidateCsvBuffer(
+        csv(studentHeaders, `${nim},Ada,ada@example.com,,COMP,secret`),
+        "student"
+      ).then((validation) => importCsvUsers(validation, store));
+
+    const reports = await Promise.all([upload("2501959296"), upload("2501959297")]);
+
+    assert.equal(store.users.length, 1);
+    assert.deepEqual(
+      reports.map((report) => report.successful_inserts).sort(),
+      [0, 1]
+    );
   });
 
   it("stops on an unexpected database error and keeps the partial report", async () => {

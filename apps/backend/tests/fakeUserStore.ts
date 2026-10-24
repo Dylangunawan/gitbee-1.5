@@ -3,7 +3,9 @@
 import { Prisma } from "../api/prisma/generated/prisma/client.js";
 import type { CsvUserStore, NewCsvUser } from "../api/utils/csv/csvUserImport.js";
 
-const uniqueColumns = ["student_id", "lecturer_code", "binusian_id"] as const;
+const uniqueColumns = ["student_id", "lecturer_code", "binusian_id", "email"] as const;
+// MySQL's default collation compares these case-insensitively.
+const same = (a: string | null | undefined, b: string) => a?.toLowerCase() === b.toLowerCase();
 
 // Same shape Prisma 7 + @prisma/adapter-mariadb throws for MySQL error 1062.
 export function uniqueViolation(index: string) {
@@ -29,13 +31,10 @@ export function createFakeUserStore(existing: Partial<NewCsvUser>[] = []) {
 
   const store: CsvUserStore & { users: NewCsvUser[] } = {
     users,
-    async emailExists(email) {
-      return all().some((user) => user.email === email);
-    },
     async createUser(user) {
       for (const column of uniqueColumns) {
         const value = user[column];
-        if (value != null && all().some((other) => other[column] === value)) {
+        if (value != null && all().some((other) => same(other[column], value))) {
           throw uniqueViolation(`user_${column}_key`);
         }
       }

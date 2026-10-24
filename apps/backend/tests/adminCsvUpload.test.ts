@@ -20,7 +20,6 @@ const { createFakeUserStore } = await import("./fakeUserStore.js");
 let fakeStore = createFakeUserStore();
 beforeEach(() => {
   fakeStore = createFakeUserStore();
-  mock.method(prismaUserStore, "emailExists", fakeStore.emailExists);
   mock.method(prismaUserStore, "createUser", fakeStore.createUser);
 });
 afterEach(() => mock.restoreAll());
@@ -230,7 +229,6 @@ describe("Admin CSV uploads", () => {
 
   it("reports duplicates against the database as failed rows", async () => {
     fakeStore = createFakeUserStore([{ email: "old@example.com", lecturer_code: "TY23-1" }]);
-    mock.method(prismaUserStore, "emailExists", fakeStore.emailExists);
     mock.method(prismaUserStore, "createUser", fakeStore.createUser);
     const csv = [
       staffHeaders,
@@ -255,6 +253,27 @@ describe("Admin CSV uploads", () => {
         { row_number: 3, identifier: "TY23-2", error: 'email "old@example.com" is already in use' },
       ],
     });
+  });
+
+  it("reports HoP rows as failed because their majors can't be resolved yet", async () => {
+    const csv = [
+      staffHeaders,
+      "RA23-1,Roger,roger@example.com,B1,HoP,COMP,secret",
+      "TY23-1,Ada,ada@example.com,B2,Lecturer,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(staffCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "staff.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.successful_inserts, 1);
+    assert.equal(response.body.data.failed_rows[0].identifier, "RA23-1");
+    assert.match(response.body.data.failed_rows[0].error, /HoP accounts can't be imported/);
+    assert.deepEqual(fakeStore.users.map((user) => user.lecturer_code), ["TY23-1"]);
   });
 
   it("returns 500 with the partial report when the database fails mid-import", async () => {

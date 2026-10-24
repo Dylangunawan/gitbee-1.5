@@ -37,15 +37,13 @@ export interface NewCsvUser {
   lecturer_code: string | null;
 }
 
+// Duplicates are left to the user table's unique indexes (email, student_id,
+// lecturer_code, binusian_id), so concurrent uploads can't both insert the same user.
 export interface CsvUserStore {
-  emailExists(email: string): Promise<boolean>;
   createUser(user: NewCsvUser): Promise<void>;
 }
 
 export const prismaUserStore: CsvUserStore = {
-  async emailExists(email) {
-    return (await prisma.user.count({ where: { email } })) > 0;
-  },
   async createUser(user) {
     await prisma.user.create({ data: user, select: { id: true } });
   },
@@ -56,11 +54,13 @@ export const prismaUserStore: CsvUserStore = {
 const HASH_BATCH_SIZE = 4;
 
 // user table column -> CSV column, for duplicate-key messages.
-const uniqueColumnLabels: Record<string, string> = {
+const uniqueColumnLabels = {
+  email: "email",
   student_id: "nim",
   lecturer_code: "lecturer_code",
   binusian_id: "binusian_id",
-};
+} as const;
+type UniqueColumn = keyof typeof uniqueColumnLabels;
 
 function toNewUser(row: StudentCsvRow | StaffCsvRow, password: string): NewCsvUser {
   if ("nim" in row) {
@@ -87,7 +87,7 @@ function toNewUser(row: StudentCsvRow | StaffCsvRow, password: string): NewCsvUs
   };
 }
 
-function duplicateColumn(error: Prisma.PrismaClientKnownRequestError): string | null {
+function duplicateColumn(error: Prisma.PrismaClientKnownRequestError): UniqueColumn | null {
   const meta = error.meta as
     | {
         target?: string | string[];
@@ -100,10 +100,11 @@ function duplicateColumn(error: Prisma.PrismaClientKnownRequestError): string | 
     ...(constraint?.fields ?? []),
     constraint?.index?.replace(/^user_(.+)_key$/, "$1"),
   ];
-  const column = candidates.find(
-    (candidate): candidate is string => !!candidate && candidate in uniqueColumnLabels
+  return (
+    candidates.find(
+      (candidate): candidate is UniqueColumn => !!candidate && candidate in uniqueColumnLabels
+    ) ?? null
   );
-  return column ? uniqueColumnLabels[column] ?? null : null;
 }
 
 function rowErrorFor(error: unknown, user: NewCsvUser): string | null {
@@ -112,14 +113,9 @@ function rowErrorFor(error: unknown, user: NewCsvUser): string | null {
   }
   if (error.code === "P2002") {
     const column = duplicateColumn(error);
-    const value =
-      column === "nim" ? user.student_id
-        : column === "lecturer_code" ? user.lecturer_code
-        : column === "binusian_id" ? user.binusian_id
-        : null;
     return column
-      ? `${column} "${value}" is already in use`
-      : "a user with the same NIM, lecturer code or Binusian ID already exists";
+      ? `${uniqueColumnLabels[column]} "${user[column]}" is already in use`
+      : "a user with the same email, NIM, lecturer code or Binusian ID already exists";
   }
   if (error.code === "P2000") {
     return "a value is too long for the database column";
@@ -139,21 +135,28 @@ export async function importCsvUsers<T extends CsvUploadType>(
     failed_rows: [...failedRows].sort((a, b) => a.row_number - b.row_number),
   });
 
-  for (let start = 0; start < validation.validRows.length; start += HASH_BATCH_SIZE) {
-    const batch = validation.validRows.slice(start, start + HASH_BATCH_SIZE);
+  // A HoP needs hop_major links, but majors have no codes to resolve
+  // major_codes against yet; importing the row would create a HoP with no majors.
+  const importableRows = validation.validRows.filter((row) => {
+    const data: StudentCsvRow | StaffCsvRow = row.data;
+    if ("role" in data && data.role === "HoP") {
+      failedRows.push({
+        row_number: row.row_number,
+        identifier: row.identifier,
+        error: `major_codes "${data.major_codes}" can't be resolved: majors have no codes yet, so HoP accounts can't be imported`,
+      });
+      return false;
+    }
+    return true;
+  });
+
+  for (let start = 0; start < importableRows.length; start += HASH_BATCH_SIZE) {
+    const batch = importableRows.slice(start, start + HASH_BATCH_SIZE);
     const hashes = await Promise.all(batch.map((row) => hashPassword(row.data.password)));
 
     for (const [index, row] of batch.entries()) {
       const user = toNewUser(row.data, hashes[index] as string);
       try {
-        if (await store.emailExists(user.email)) {
-          failedRows.push({
-            row_number: row.row_number,
-            identifier: row.identifier,
-            error: `email "${user.email}" is already in use`,
-          });
-          continue;
-        }
         await store.createUser(user);
         successfulInserts += 1;
       } catch (error) {
