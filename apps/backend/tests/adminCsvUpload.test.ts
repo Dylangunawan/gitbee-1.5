@@ -20,7 +20,8 @@ const { createFakeUserStore } = await import("./fakeUserStore.js");
 let fakeStore = createFakeUserStore();
 beforeEach(() => {
   fakeStore = createFakeUserStore();
-  mock.method(prismaUserStore, "createUser", fakeStore.createUser);
+  mock.method(prismaUserStore, "findExistingUsers", fakeStore.findExistingUsers);
+  mock.method(prismaUserStore, "createMany", fakeStore.createMany);
 });
 afterEach(() => mock.restoreAll());
 
@@ -93,9 +94,11 @@ describe("Admin CSV uploads", () => {
       .set("Cookie", authCookie);
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.data, {
-      total_rows: 1,
-      successful_inserts: 1,
-      failed_rows: [],
+      totalParsed: 1,
+      createdCount: 1,
+      skippedCount: 0,
+      failedCount: 0,
+      errors: [],
     });
     assert.equal(fakeStore.users[0]?.student_id, "2501959296");
     assert.match(fakeStore.users[0]?.password ?? "", /^scrypt\$/);
@@ -141,7 +144,7 @@ describe("Admin CSV uploads", () => {
       .set("Cookie", authCookie);
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.data.successful_inserts, 1);
+    assert.equal(response.body.data.createdCount, 1);
     assert.equal(fakeStore.users[0]?.name, "Ada");
   });
 
@@ -155,7 +158,7 @@ describe("Admin CSV uploads", () => {
       .set("Cookie", authCookie);
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.data.successful_inserts, 1);
+    assert.equal(response.body.data.createdCount, 1);
     assert.equal(fakeStore.users[0]?.lecturer_code, "TY23-1");
     assert.equal(fakeStore.users[0]?.role, "Lecturer");
   });
@@ -215,21 +218,23 @@ describe("Admin CSV uploads", () => {
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.data, {
-      total_rows: 2,
-      successful_inserts: 1,
-      failed_rows: [
+      totalParsed: 2,
+      createdCount: 1,
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [
         {
-          row_number: 3,
-          identifier: "2501959297",
-          error: "email: must be a valid email address",
+          line: 3,
+          errors: ["email: must be a valid email address"],
         },
       ],
     });
   });
 
-  it("reports duplicates against the database as failed rows", async () => {
+  it("reports rows with database identity conflicts", async () => {
     fakeStore = createFakeUserStore([{ email: "old@example.com", lecturer_code: "TY23-1" }]);
-    mock.method(prismaUserStore, "createUser", fakeStore.createUser);
+    mock.method(prismaUserStore, "findExistingUsers", fakeStore.findExistingUsers);
+    mock.method(prismaUserStore, "createMany", fakeStore.createMany);
     const csv = [
       staffHeaders,
       "TY23-1,Ada,ada@example.com,B1,Lecturer,COMP,secret",
@@ -246,13 +251,236 @@ describe("Admin CSV uploads", () => {
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.data, {
-      total_rows: 3,
-      successful_inserts: 1,
-      failed_rows: [
-        { row_number: 2, identifier: "TY23-1", error: 'lecturer_code "TY23-1" is already in use' },
-        { row_number: 3, identifier: "TY23-2", error: 'email "old@example.com" is already in use' },
+      totalParsed: 3,
+      createdCount: 1,
+      skippedCount: 2,
+      failedCount: 0,
+      errors: [
+        {
+          line: 2,
+          errors: ["User with email or ID already exists in the system"],
+        },
+        {
+          line: 3,
+          errors: ["User with email or ID already exists in the system"],
+        },
       ],
     });
+  });
+
+  it("detects repeated emails and student IDs within one upload", async () => {
+    const csv = [
+      studentHeaders,
+      "2501959296,Ada,Ada@Example.com,B101,COMP,secret",
+      "2501959297,Ada Again,ada@example.com,B102,COMP,secret",
+      "2501959296,Another Ada,another@example.com,B103,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.createdCount, 1);
+    assert.equal(response.body.data.skippedCount, 2);
+    assert.equal(response.body.data.failedCount, 0);
+    assert.deepEqual(response.body.data.errors, [
+      { line: 3, errors: ["Duplicate record within the uploaded file"] },
+      { line: 4, errors: ["Duplicate record within the uploaded file"] },
+    ]);
+    assert.equal(
+      response.body.data.totalParsed,
+      response.body.data.createdCount +
+        response.body.data.skippedCount +
+        response.body.data.failedCount
+    );
+  });
+
+  it("does not treat missing optional IDs as duplicate identity values", async () => {
+    const csv = [
+      studentHeaders,
+      "2501959296,Ada,ada@example.com,,COMP,secret",
+      "2501959297,Bob,bob@example.com,,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.createdCount, 2);
+    assert.equal(response.body.data.skippedCount, 0);
+    assert.equal(response.body.data.failedCount, 0);
+    assert.deepEqual(response.body.data.errors, []);
+  });
+
+  it("detects existing database email and student ID conflicts case-insensitively", async () => {
+    fakeStore = createFakeUserStore([
+      { email: "Existing@Example.com", student_id: "2500000000" },
+      { email: "other@example.com", student_id: "2500000001" },
+    ]);
+    mock.method(prismaUserStore, "findExistingUsers", fakeStore.findExistingUsers);
+    mock.method(prismaUserStore, "createMany", fakeStore.createMany);
+    const csv = [
+      studentHeaders,
+      "2501959296,Email Conflict,existing@example.com,B101,COMP,secret",
+      "2500000001,ID Conflict,id-conflict@example.com,B102,COMP,secret",
+      "2501959298,New User,new@example.com,B103,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.createdCount, 1);
+    assert.equal(response.body.data.skippedCount, 2);
+    assert.equal(response.body.data.failedCount, 0);
+    assert.deepEqual(response.body.data.errors, [
+      {
+        line: 2,
+        errors: ["User with email or ID already exists in the system"],
+      },
+      {
+        line: 3,
+        errors: ["User with email or ID already exists in the system"],
+      },
+    ]);
+  });
+
+  it("does not reserve identities from database-conflicting rows", async () => {
+    fakeStore = createFakeUserStore([{ email: "existing@example.com" }]);
+    mock.method(prismaUserStore, "findExistingUsers", fakeStore.findExistingUsers);
+    mock.method(prismaUserStore, "createMany", fakeStore.createMany);
+    const csv = [
+      studentHeaders,
+      "2501959296,Conflicting Row,existing@example.com,B101,COMP,secret",
+      "2501959296,Importable Row,new@example.com,B102,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.createdCount, 1);
+    assert.equal(response.body.data.skippedCount, 1);
+    assert.equal(response.body.data.failedCount, 0);
+    assert.deepEqual(response.body.data.errors, [
+      {
+        line: 2,
+        errors: ["User with email or ID already exists in the system"],
+      },
+    ]);
+    assert.equal(fakeStore.users[0]?.email, "new@example.com");
+  });
+
+  it("handles all-invalid or duplicate rows without attempting an empty insert", async () => {
+    fakeStore = createFakeUserStore([{ email: "existing@example.com" }]);
+    mock.method(prismaUserStore, "findExistingUsers", fakeStore.findExistingUsers);
+    const csv = [
+      studentHeaders,
+      "2501959296,Ada,invalid-email,B101,COMP,secret",
+      "2501959297,Bob,existing@example.com,B102,COMP,secret",
+      "2501959298,Bob Again,EXISTING@example.com,B103,COMP,secret",
+    ].join("\n");
+    const createMany = mock.method(
+      prismaUserStore,
+      "createMany",
+      fakeStore.createMany
+    );
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.createdCount, 0);
+    assert.equal(response.body.data.skippedCount, 2);
+    assert.equal(response.body.data.failedCount, 1);
+    assert.deepEqual(response.body.data.errors, [
+      { line: 2, errors: ["email: must be a valid email address"] },
+      {
+        line: 3,
+        errors: ["User with email or ID already exists in the system"],
+      },
+      {
+        line: 4,
+        errors: ["User with email or ID already exists in the system"],
+      },
+    ]);
+    assert.equal(createMany.mock.callCount(), 0);
+    assert.equal(
+      response.body.data.totalParsed,
+      response.body.data.createdCount +
+        response.body.data.skippedCount +
+        response.body.data.failedCount
+    );
+  });
+
+  it("keeps counts consistent for a mixed batch of inserts and both duplicate types", async () => {
+    fakeStore = createFakeUserStore([
+      { email: "existing@example.com", student_id: "2500000000" },
+    ]);
+    const lookups: number[] = [];
+    mock.method(prismaUserStore, "findExistingUsers", async (identities) => {
+      lookups.push(identities.length);
+      return fakeStore.findExistingUsers(identities);
+    });
+    mock.method(prismaUserStore, "createMany", fakeStore.createMany);
+    const csv = [
+      studentHeaders,
+      "2501959296,Ada,ada@example.com,B101,COMP,secret",
+      "2501959297,Ada Again,ADA@example.com,B102,COMP,secret",
+      "2501959298,Email Conflict,existing@example.com,B103,COMP,secret",
+      "2500000000,ID Conflict,id-conflict@example.com,B104,COMP,secret",
+      "2501959299,Cy,cy@example.com,B105,COMP,secret",
+    ].join("\n");
+    const response = await request(app)
+      .post(studentCsvPath)
+      .attach("file", Buffer.from(csv), {
+        filename: "students.csv",
+        contentType: "text/csv",
+      })
+      .set("Cookie", authCookie);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.createdCount, 2);
+    assert.equal(response.body.data.skippedCount, 3);
+    assert.equal(response.body.data.failedCount, 0);
+    assert.deepEqual(response.body.data.errors, [
+      { line: 3, errors: ["Duplicate record within the uploaded file"] },
+      {
+        line: 4,
+        errors: ["User with email or ID already exists in the system"],
+      },
+      {
+        line: 5,
+        errors: ["User with email or ID already exists in the system"],
+      },
+    ]);
+    assert.deepEqual(lookups, [5]);
+    assert.equal(
+      response.body.data.totalParsed,
+      response.body.data.createdCount +
+        response.body.data.skippedCount +
+        response.body.data.failedCount
+    );
   });
 
   it("reports HoP rows as failed because their majors can't be resolved yet", async () => {
@@ -270,20 +498,15 @@ describe("Admin CSV uploads", () => {
       .set("Cookie", authCookie);
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.data.successful_inserts, 1);
-    assert.equal(response.body.data.failed_rows[0].identifier, "RA23-1");
-    assert.match(response.body.data.failed_rows[0].error, /HoP accounts can't be imported/);
+    assert.equal(response.body.data.createdCount, 1);
+    assert.equal(response.body.data.errors[0].line, 2);
+    assert.match(response.body.data.errors[0].errors[0], /HoP accounts can't be imported/);
     assert.deepEqual(fakeStore.users.map((user) => user.lecturer_code), ["TY23-1"]);
   });
 
-  it("returns 500 with the partial report when the database fails mid-import", async () => {
-    let calls = 0;
-    mock.method(prismaUserStore, "createUser", async (user: Parameters<typeof fakeStore.createUser>[0]) => {
-      calls += 1;
-      if (calls === 2) {
-        throw new Error("connect ECONNREFUSED");
-      }
-      return fakeStore.createUser(user);
+  it("returns a summary with line-numbered insertion failures", async () => {
+    mock.method(prismaUserStore, "findExistingUsers", async () => {
+      throw new Error("connect ECONNREFUSED");
     });
     const csv = [
       studentHeaders,
@@ -299,12 +522,26 @@ describe("Admin CSV uploads", () => {
       })
       .set("Cookie", authCookie);
 
-    assert.equal(response.status, 500);
-    assert.deepEqual(response.body.errors, {
-      message: "Import stopped at row 3: connect ECONNREFUSED",
-      total_rows: 3,
-      successful_inserts: 1,
-      failed_rows: [],
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.data, {
+      totalParsed: 3,
+      createdCount: 0,
+      skippedCount: 0,
+      failedCount: 3,
+      errors: [
+        {
+          line: 2,
+          errors: ["connect ECONNREFUSED"],
+        },
+        {
+          line: 3,
+          errors: ["connect ECONNREFUSED"],
+        },
+        {
+          line: 4,
+          errors: ["connect ECONNREFUSED"],
+        },
+      ],
     });
   });
 
@@ -321,13 +558,14 @@ describe("Admin CSV uploads", () => {
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.data, {
-      total_rows: 1,
-      successful_inserts: 0,
-      failed_rows: [
+      totalParsed: 1,
+      createdCount: 0,
+      skippedCount: 0,
+      failedCount: 1,
+      errors: [
         {
-          row_number: 2,
-          identifier: "TY23-1",
-          error: "email: must be a valid email address",
+          line: 2,
+          errors: ["email: must be a valid email address"],
         },
       ],
     });
