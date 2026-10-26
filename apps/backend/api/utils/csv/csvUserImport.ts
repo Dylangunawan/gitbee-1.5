@@ -86,14 +86,16 @@ export const prismaUserStore: CsvUserStore = {
   },
   // utf8mb4_unicode_ci ignores case and accents and has rules JavaScript can't
   // reproduce (ß = ss, full-width = ASCII, ignorable characters), so MySQL
-  // computes the keys. RTRIM matches its PAD SPACE handling of trailing spaces.
+  // computes the keys. Trim trailing space weights for PAD SPACE equality,
+  // including Unicode spaces and spaces followed by ignorable characters.
   async collationKeys(values) {
     const distinct = [...new Set(values)];
     if (distinct.length === 0) return new Map();
 
     const rows = await prisma.$queryRaw<{ value: string; sort_key: string }[]>`
       SELECT input.value,
-             HEX(WEIGHT_STRING(RTRIM(input.value) COLLATE ${Prisma.raw(USER_TABLE_COLLATION)})) AS sort_key
+             HEX(TRIM(TRAILING WEIGHT_STRING(_utf8mb4' ' COLLATE ${Prisma.raw(USER_TABLE_COLLATION)})
+                      FROM WEIGHT_STRING(input.value COLLATE ${Prisma.raw(USER_TABLE_COLLATION)}))) AS sort_key
       FROM JSON_TABLE(${JSON.stringify(distinct)}, '$[*]' COLUMNS (value VARCHAR(255) PATH '$')) AS input`;
     return new Map(rows.map((row) => [row.value, row.sort_key]));
   },

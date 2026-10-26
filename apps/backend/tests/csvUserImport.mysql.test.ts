@@ -65,6 +65,36 @@ describe(
       ]);
     });
 
+    it("reports an existing NIM with collation-equivalent trailing padding", async () => {
+      const first = await upload(`PAD-${run},Ada,pad.first@${domain},,CS,secret`);
+      assert.equal(first.createdCount, 1);
+
+      const report = await upload(`"PAD-${run}\u00a0",Bob,pad.again@${domain},,CS,secret`);
+
+      assert.deepEqual(report, {
+        totalParsed: 1,
+        createdCount: 0,
+        skippedCount: 1,
+        failedCount: 0,
+        errors: [{ line: 2, errors: [alreadyExists] }],
+      });
+    });
+
+    it("reports in-file NIM duplicates with collation-equivalent trailing padding", async () => {
+      const report = await upload(
+        `FILE-${run},Ada,file.first@${domain},,CS,secret`,
+        `"FILE-${run}\u00a0",Bob,file.again@${domain},,CS,secret`
+      );
+
+      assert.deepEqual(report, {
+        totalParsed: 2,
+        createdCount: 1,
+        skippedCount: 1,
+        failedCount: 0,
+        errors: [{ line: 3, errors: ["Duplicate record within the uploaded file"] }],
+      });
+    });
+
     it("follows MySQL's other equivalences, like ß = ss and full-width letters", async () => {
       const first = await upload(
         `GUS-${run},Gus,gus@${domain},Straße-${run},CS,secret`,
@@ -93,6 +123,14 @@ describe(
         ["a​b", "ab"],
         ["é", "é"],
         ["abc", "abc   "],
+        ["abc", "abc\u00a0"],
+        ["abc", "abc\u2007"],
+        ["abc", "abc\u202f"],
+        ["abc", "abc\u3000"],
+        ["abc", "abc\u00a0\u200b"],
+        ["abc", "abc \u200b"],
+        ["\u00a0abc", "abc"],
+        ["a\u00a0b", "a b"],
         [" abc", "abc"],
         ["Øle", "Ole"],
       ];
