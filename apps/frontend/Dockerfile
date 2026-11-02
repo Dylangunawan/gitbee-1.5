@@ -1,8 +1,11 @@
 # syntax=docker.io/docker/dockerfile:1
 
 # Official pnpm base image (Debian slim + standalone pnpm, no Node bundled).
-# It sets PNPM_HOME=/pnpm (on PATH) with the store at /pnpm/store,
-# which is what the BuildKit cache mount below targets.
+# It sets PNPM_HOME=/pnpm (on PATH) with the store at /pnpm/store.
+# `pnpm runtime set` installs Node *into* /pnpm/store (the global `node` is a
+# symlink there), so the BuildKit install cache must NOT mount over
+# /pnpm/store or it hides Node and every lifecycle script fails with exit 127.
+# The install below uses a separate store at /pnpm/cache-store instead.
 FROM ghcr.io/pnpm/pnpm:12 AS base
 RUN pnpm runtime set node 24 -g
 WORKDIR /repo
@@ -10,7 +13,7 @@ WORKDIR /repo
 # Install the workspace and build the Next.js app.
 FROM base AS build
 COPY . .
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/cache-store pnpm install --frozen-lockfile --store-dir /pnpm/cache-store
 
 ARG NEXT_PUBLIC_BACKEND_API
 ENV NEXT_PUBLIC_BACKEND_API=$NEXT_PUBLIC_BACKEND_API
