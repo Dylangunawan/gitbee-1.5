@@ -15,7 +15,7 @@ import { FaUser } from "react-icons/fa";
 import { IoLogOut } from "react-icons/io5";
 import { MdSupportAgent } from "react-icons/md";
 import { useRouter } from "next/navigation";
-import { login } from "@/app/(pages)/login/actions";
+import { switchRole } from "@/app/(pages)/login/actions";
 import {
   dashboardPathForRole,
   SESSION_COOKIE_NAME,
@@ -32,6 +32,7 @@ const Header = () => {
   const [expand, setExpand] = useState(true);
   const [onTop, setOnTop] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const [openHamburger, setOpenHamburger] = useState(false);
 
   useEffect(() => {
@@ -100,6 +101,10 @@ const Header = () => {
     Cookies.remove(SESSION_COOKIE_NAME, { path: "/" });
     Cookies.remove("token", { path: "/" });
     setUserData(null);
+    if (!userData?.microsoftToken) {
+      router.push("/");
+      return;
+    }
     await instance.logoutRedirect().catch((error: unknown) => {
       console.error("Logout failed:", error);
     });
@@ -108,39 +113,11 @@ const Header = () => {
   const changeRole = async (role: string) => {
     if (!userData) return;
     setLoading(true);
+    setRoleError(null);
     try {
-      let data:
-        | {
-            nim: string;
-            Name: string;
-            Email: string;
-            ActiveRole: string;
-            Role: string[];
-            MicrosoftToken: string;
-          }
-        | undefined;
-
-      if (userData.microsoftToken) {
-        const result = await login(userData.microsoftToken, role);
-        if (result?.success) data = result.data;
-      } else {
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_BACKEND_API}auth/login-local/role`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ role }),
-          }
-        );
-        const result = (await response.json()) as {
-          status?: boolean;
-          data?: typeof data;
-        };
-        if (response.ok && result.status) data = result.data;
-      }
-
-      if (data) {
+      const result = await switchRole(userData.microsoftToken, role);
+      if (result.success) {
+        const data = result.data;
         setUserData({
           nim: data.nim,
           name: data.Name,
@@ -153,10 +130,11 @@ const Header = () => {
         const dashboard = dashboardPathForRole(data.ActiveRole);
         if (dashboard) router.push(dashboard);
       } else {
-        console.error("Role switch failed");
+        setRoleError(result.message);
       }
     } catch (error) {
       console.error("Role switch failed:", error);
+      setRoleError("Couldn't switch roles. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -421,6 +399,7 @@ const Header = () => {
               </PopoverTrigger>
               {expand && (
                 <PopoverContent className="flex flex-col">
+                  {roleError && <p role="alert" className="text-sm text-red-600">{roleError}</p>}
                   <div className="flex justify-between items-center border-b pb-3 px-1">
                     <div className="border border-primary-orange rounded-full p-1">
                       <Avatar>

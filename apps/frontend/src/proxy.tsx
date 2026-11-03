@@ -16,6 +16,8 @@ export function proxy(req: NextRequest) {
     if (
       !decoded ||
       typeof decoded === "string" ||
+      typeof decoded.exp !== "number" ||
+      decoded.exp <= Date.now() / 1000 ||
       !Array.isArray(decoded.role) ||
       !decoded.role.every((role): role is string => typeof role === "string")
     ) {
@@ -23,24 +25,23 @@ export function proxy(req: NextRequest) {
     }
 
     const roles = decoded.role.map((r) => r.toLowerCase());
-    console.log("User roles:", roles);
 
     const roleBasedAccess: Record<string, RegExp[]> = {
-      student: [/^\/dashboard/, /^\/course/, /^\/profile/],
+      student: [/^\/dashboard(?:\/|$)/, /^\/course(?:\/|$)/, /^\/profile(?:\/|$)/],
       lecturer: [
-        /^\/dashboard-lecturer/,
-        /^\/course-lecturer/,
-        /^\/history-lecturer/,
+        /^\/dashboard-lecturer(?:\/|$)/,
+        /^\/course-lecturer(?:\/|$)/,
+        /^\/history-lecturer(?:\/|$)/,
       ],
-      scc: [/^\/dashboard-scc/],
-      hop: [/^\/dashboard-hop/],
+      scc: [/^\/dashboard-scc(?:\/|$)/],
+      hop: [/^\/dashboard-hop(?:\/|$)/],
       admin: [
-        /^\/dashboard-admin/,
-        /^\/detail-admin-project/,
-        /^\/manage-categories/,
-        /^\/manage-student/,
-        /^\/manage-transactions/,
-        /^\/manage-users/,
+        /^\/dashboard-admin(?:\/|$)/,
+        /^\/detail-admin-project(?:\/|$)/,
+        /^\/manage-categories(?:\/|$)/,
+        /^\/manage-student(?:\/|$)/,
+        /^\/manage-transactions(?:\/|$)/,
+        /^\/manage-users(?:\/|$)/,
       ],
     };
 
@@ -49,7 +50,6 @@ export function proxy(req: NextRequest) {
         roles.includes(role) && paths.some((regex) => regex.test(pathname))
     );
 
-    console.log(isAllowed);
     if (!isAllowed) {
       return NextResponse.redirect(new URL("/login/microsoft", req.url));
     }
@@ -64,7 +64,7 @@ export const config = {
   matcher: [
     "/course/:path*",
     "/dashboard/:path*",
-    "/profile",
+    "/profile/:path*",
     "/course-lecturer/:path*",
     "/dashboard-lecturer/:path*",
     "/history-lecturer/:path*",

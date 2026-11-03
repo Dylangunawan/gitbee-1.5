@@ -117,6 +117,8 @@ SEED_ON_BOOT=true SEED_DUMMY_STUDENTS=200 SEED_DUMMY_STAFF=40 docker compose up 
 
 `pnpm test` runs every test without a database. Tests that need real MySQL behaviour, such as how the `user` table's collation treats duplicate IDs, are skipped unless `TEST_DATABASE_URL` points at a migrated database. Use a separate database: the tests add and then delete their own rows, but never point them at real data.
 
+Task 4.5 adds frontend protected-route and role-switch tests to this command, plus a five-role backend middleware matrix. With `TEST_DATABASE_URL` set, it also checks real local credential login, cookie renewal, role switching and session revocation. See [Local auth verification](docs/local-auth-verification.md) for the access matrix, browser checklist and verification limits.
+
 ```bash
 docker compose up -d mysql
 docker exec gitbee-mysql mysql -uroot -padmin -e "CREATE DATABASE IF NOT EXISTS gitbee_test"
