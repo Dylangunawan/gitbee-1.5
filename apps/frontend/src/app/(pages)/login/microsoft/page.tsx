@@ -1,17 +1,48 @@
 "use client";
 import { useMsal } from "@azure/msal-react";
-import React, { useEffect } from "react";
+import Link from "next/link";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { login } from "../actions";
+import { login, loginDevBypass } from "../actions";
 import { useAuth } from "@/app/context/AuthContext";
+import { dashboardPathForRole, SSO_BYPASS_ENABLED } from "@/lib/auth";
 
 const Page = () => {
   const { userData, setUserData } = useAuth();
   const { instance, inProgress, accounts } = useMsal();
   const router = useRouter();
+  // proxy.tsx also sends signed-in users here when their role doesn't match,
+  // so only use the dev account when there's no session to replace. The
+  // effect re-runs as MSAL's state changes; the bypass must only fire once.
+  const bypassRef = useRef<"skip" | "ready" | "started">(
+    SSO_BYPASS_ENABLED && !userData ? "ready" : "skip"
+  );
+  const [bypassError, setBypassError] = useState<string | null>(null);
 
   useEffect(() => {
     const handleRedirect = async () => {
+      if (bypassRef.current !== "skip") {
+        if (bypassRef.current === "started") return;
+        bypassRef.current = "started";
+        const result = await loginDevBypass();
+        if (result.success) {
+          setUserData({
+            nim: result.data.nim,
+            name: result.data.Name,
+            email: result.data.Email,
+            role: result.data.ActiveRole,
+            listRole: result.data.Role,
+            microsoftToken: result.data.MicrosoftToken,
+          });
+          router.push(dashboardPathForRole(result.data.ActiveRole) ?? "/");
+        } else {
+          // Stay here with the reason: sending the developer home just makes
+          // the next login attempt fail the same way, unexplained.
+          setBypassError(result.message ?? "Dev login failed.");
+        }
+        return;
+      }
+
       if (inProgress === "none" && accounts.length > 0) {
         try {
           const account = accounts[0];
@@ -42,16 +73,7 @@ const Page = () => {
             });
 
             console.log(result.data);
-            if (result.data.ActiveRole?.toLowerCase() == "student")
-              router.push("/dashboard");
-            if (result.data.ActiveRole?.toLowerCase() == "lecturer")
-              router.push("/dashboard-lecturer");
-            if (result.data.ActiveRole?.toLowerCase() == "scc")
-              router.push("/dashboard-scc");
-            if (result.data.ActiveRole?.toLowerCase() == "hop")
-              router.push("/dashboard-hop");
-            if (result.data.ActiveRole?.toLowerCase() == "admin")
-              router.push("/dashboard-admin");
+            router.push(dashboardPathForRole(result.data.ActiveRole) ?? "/");
           } else {
             router.push("/");
           }
@@ -65,6 +87,22 @@ const Page = () => {
 
     handleRedirect();
   }, [instance, accounts, inProgress, router, setUserData]);
+
+  if (bypassError) {
+    return (
+      <div className="fixed z-[100] bg-white w-screen h-screen flex justify-center items-center px-6">
+        <div className="max-w-xl flex flex-col gap-4 items-center text-center">
+          <h1 className="font-montserrat font-bold text-2xl text-primary-binus">
+            Dev login failed
+          </h1>
+          <p className="text-gray-700 break-words">{bypassError}</p>
+          <Link href="/" className="text-primary-orange underline">
+            Back to home
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed z-[100] bg-white w-screen h-screen flex justify-center items-center">

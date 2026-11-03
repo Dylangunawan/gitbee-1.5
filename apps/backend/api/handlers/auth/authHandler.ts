@@ -7,6 +7,7 @@ import GenericService from "../../services/generic/genericService.js";
 import type { AtlantisAccountData } from "../../services/generic/genericService.js";
 import { prisma } from "../../prisma/client.js";
 import { hashPassword, verifyPassword } from "../../utils/auth/password.js";
+import { DEV_BYPASS_USER, isSsoBypassEnabled } from "../../utils/auth/devBypass.js";
 
 const DUMMY_PASSWORD_HASH = "scrypt$16384$8$1$Z2l0YmVlLWxvY2FsLWxvZ2luLWR1bW15LXNhbHQ=$wFAFffXSmSnjf95eUXNLQGx6IOgpXcbt/0yauPvSta/wt3Y85e6A9x17lhMJV8LyAqARq+3zt0t6doSwyqIfeA==";
 
@@ -190,6 +191,47 @@ export default class AuthHandler {
             });
         } catch (error) {
             return next(error);
+        }
+    }
+
+    static async loginDevBypass(_req: Request, res: Response) {
+        if (!isSsoBypassEnabled()) {
+            return sendErrorResponse(res, "Not found", 404);
+        }
+        try {
+            const user = await prisma.user.upsert({
+                where: { email: DEV_BYPASS_USER.email },
+                update: {},
+                create: DEV_BYPASS_USER,
+                select: {
+                    id: true, email: true, name: true, role: true, user_type: true,
+                    student_id: true, binusian_id: true, lecturer_code: true,
+                    credential_version: true,
+                },
+            });
+            const roles = getLocalRoles(user);
+            if (roles.length === 0) {
+                return sendErrorResponse(res, "Invalid local account role", 403);
+            }
+            const token = createLocalToken(user);
+            return sendSuccessResponse(res, {
+                nim: getLocalNim(user),
+                Name: user.name.toUpperCase(),
+                Email: user.email,
+                Role: roles,
+                ActiveRole: roles[0],
+                MicrosoftToken: "",
+            }, {
+                name: process.env.COOKIE_NAME ?? "gitbee_token",
+                value: token.token,
+                expires: token.expires,
+            });
+        } catch (error) {
+            // Dev-only route, so hand the cause (e.g. an unmigrated database)
+            // to the login page as JSON rather than Express's HTML 500.
+            console.error(error);
+            const cause = getErrorMessage(error).trim().split("\n").at(-1);
+            return sendErrorResponse(res, cause, 500);
         }
     }
 
