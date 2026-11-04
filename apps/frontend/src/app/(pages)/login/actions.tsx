@@ -1,4 +1,17 @@
-export const login = async (microsoftToken: string, role?: string) => {
+interface LoginData {
+  nim: string;
+  Name: string;
+  Email: string;
+  ActiveRole: string;
+  Role: string[];
+  MicrosoftToken: string;
+}
+
+type LoginResult =
+  | { success: true; data: LoginData }
+  | { success: false; message: string };
+
+export const login = async (microsoftToken: string, role?: string): Promise<LoginResult> => {
   try {
     const responselogin = await fetch(
       `${process.env.NEXT_PUBLIC_BACKEND_API}auth/login`,
@@ -12,15 +25,41 @@ export const login = async (microsoftToken: string, role?: string) => {
       }
     );
 
-    const resultlogin = await responselogin.json();
-    console.log(resultlogin);
-    if (resultlogin.status) {
+    const resultlogin = await responselogin.json() as {
+      status?: boolean; data?: LoginData; errors?: string; message?: string;
+    };
+    if (responselogin.ok && resultlogin.status && resultlogin.data) {
       return { success: true, data: resultlogin.data };
     } else {
-      return { success: false, message: resultlogin.message };
+      return { success: false, message: resultlogin.errors ?? resultlogin.message ?? "Login failed" };
     }
-  } catch (error: any) {
-    console.error("API call failed:", error.message);
+  } catch {
+    return { success: false, message: "Couldn't sign in. Please try again." };
+  }
+};
+
+// Local passwords and the dev bypass both use the session cookie. Only SSO
+// sessions re-post their Microsoft token when choosing another role.
+export const switchRole = async (microsoftToken: string, role: string): Promise<LoginResult> => {
+  if (microsoftToken) return login(microsoftToken, role);
+
+  try {
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_BACKEND_API}auth/login-local/role`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ role }),
+      }
+    );
+    const result = await response.json() as { status?: boolean; data?: LoginData; errors?: string };
+    if (response.ok && result.status && result.data) {
+      return { success: true, data: result.data };
+    }
+    return { success: false, message: result.errors ?? "Role switch failed" };
+  } catch {
+    return { success: false, message: "Couldn't switch roles. Please try again." };
   }
 };
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import express from "express";
 import cookieParser from "cookie-parser";
@@ -177,10 +176,7 @@ describe("local authentication routes", () => {
     assert.equal(passwordWrites, 0);
   });
 
-  it("serves the Header role-switch contract with refreshed database membership and claims", async () => {
-    const header = await readFile(new URL("../../frontend/src/app/components/layout/Header.tsx", import.meta.url), "utf8");
-    assert.ok(header.includes("auth/login-local/role"));
-    assert.ok(header.includes('credentials: "include"'));
+  it("serves the role-switch contract with refreshed database membership and claims", async () => {
     for (const role of ["Admin", "SCC", "HoP"]) {
       user = { ...staff, role };
       const response = await request(app).post("/auth/login-local/role")

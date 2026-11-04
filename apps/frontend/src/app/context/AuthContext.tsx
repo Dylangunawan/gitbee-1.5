@@ -47,7 +47,8 @@ const getUserDataFromCookie = (): UserData | null => {
   }
 
   const decoded = jwt.decode(token);
-  if (!decoded || typeof decoded === "string") {
+  if (!decoded || typeof decoded === "string" ||
+      typeof decoded.exp !== "number" || decoded.exp <= Date.now() / 1000) {
     return null;
   }
   const roles = Array.isArray(decoded.role)
