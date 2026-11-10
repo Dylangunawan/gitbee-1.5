@@ -9,7 +9,7 @@ import { dashboardPathForRole, SSO_BYPASS_ENABLED } from "@/lib/auth";
 
 export default function LocalLoginForm() {
   const router = useRouter();
-  const { setUserData } = useAuth();
+  const { setSession } = useAuth();
   const { instance, inProgress } = useMsal();
   const callbackStartedRef = useRef(false);
 
@@ -62,16 +62,9 @@ export default function LocalLoginForm() {
 
         const result = await login(idToken);
         if (result?.success) {
-          setUserData({
-            nim: result.data.nim,
-            name: result.data.Name,
-            email: result.data.Email,
-            role: result.data.ActiveRole,
-            listRole: result.data.Role,
-            microsoftToken: result.data.MicrosoftToken,
-          });
+          setSession(result.data);
 
-          router.replace(dashboardPathForRole(result.data.ActiveRole) ?? "/");
+          router.replace(dashboardPathForRole(result.data.activeRole) ?? "/");
         } else {
           setIsCompletingCallback(false);
           setError(
@@ -86,7 +79,7 @@ export default function LocalLoginForm() {
     };
 
     void completeMicrosoftRedirect();
-  }, [inProgress, instance, router, setUserData]);
+  }, [inProgress, instance, router, setSession]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -109,16 +102,9 @@ export default function LocalLoginForm() {
       return;
     }
 
-    setUserData({
-      nim: result.data.nim,
-      name: result.data.Name,
-      email: result.data.Email,
-      role: result.data.ActiveRole,
-      listRole: result.data.Role,
-      microsoftToken: "",
-    });
+    setSession(result.data);
 
-    router.replace(dashboardPathForRole(result.data.ActiveRole) ?? "/");
+    router.replace(dashboardPathForRole(result.data.activeRole) ?? "/");
   };
 
   const loginMicrosoft = async () => {
