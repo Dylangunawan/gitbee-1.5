@@ -93,7 +93,7 @@ An authenticated local user can change their own password with `POST /api/auth/c
 
 Generators in `apps/backend/api/prisma/dummy/` produce any number of students and staff, with no network access. Students rotate through the majors CS, GAT, MAT, DS and CYBER. Staff rotate through the roles Lecturer, Admin, SCC and HoP, so together the files cover all five roles. Output is reproducible for a given `--seed`, and every generated user has the password `GitbeeDummy#2026`.
 
-**Sample CSVs.** `apps/backend/samples/students.csv` (25 students) and `staff.csv` (12 staff) are ready to upload to `POST /api/user/admin/upload-student-csv` and `upload-staff-csv`. Each file also has deliberately broken rows mixed in, which the error report should flag:
+**Sample CSVs.** `apps/backend/samples/students.csv` (25 students) and `staff.csv` (12 staff) are ready to upload to `POST /api/user/admin/upload-student-csv` and `upload-staff-csv`; `GET /api/user/admin/get-student-accounts` and `get-staff-accounts` list what was imported (see [User CSV import API](docs/user-csv-import-api.md)). Each file also has deliberately broken rows mixed in, which the error report should flag:
 
 - missing required fields, invalid emails, an over-long name, an unknown role, and a row with several problems at once
 - rows with too few or too many fields

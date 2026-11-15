@@ -2,6 +2,7 @@ import { z } from "zod";
 import { prisma } from "../../prisma/client.js";
 import { Prisma } from "../../prisma/generated/prisma/client.js";
 import { hashPassword } from "../../utils/auth/password.js";
+import { staffRoles } from "../../utils/csv/csvParser.js";
 import { readFirstSheetRows } from "../../utils/excel/excelSheet.js";
 import { ServiceError } from "../../utils/response/response.js";
 
@@ -16,6 +17,36 @@ const userListSelect = {
     lecturer_code: true,
     created_at: true,
 } as const;
+
+// Same split as getLocalRoles in utils/auth/auth.ts, so each list shows the
+// accounts that sign in as that kind of user. The column collation makes these
+// comparisons ignore case.
+const studentAccountWhere = {
+    OR: [{ role: "Student" }, { user_type: "student" }],
+} satisfies Prisma.UserWhereInput;
+
+const staffAccountWhere = {
+    role: { in: [...staffRoles] },
+    OR: [{ user_type: null }, { user_type: "staff" }],
+} satisfies Prisma.UserWhereInput;
+
+export interface AccountListParams {
+    search?: string | undefined;
+    page: number;
+    pageSize: number;
+}
+
+const searchAccounts = (search: string | undefined, columns: ("student_id" | "lecturer_code")[]) =>
+    search
+        ? {
+            OR: [
+                ...columns.map((column) => ({ [column]: { contains: search } })),
+                { binusian_id: { contains: search } },
+                { email: { contains: search } },
+                { name: { contains: search } },
+            ],
+        }
+        : {};
 
 export interface CreateUserInput {
     lecturer_code: string;
@@ -69,6 +100,64 @@ export default class UserService {
             : null;
 
         return { scc, hop, lecturer, admin };
+    }
+
+    /** Student accounts (what the student CSV import creates), newest first, one page at a time. */
+    static async listStudentAccounts(params: AccountListParams) {
+        const where = { AND: [studentAccountWhere, searchAccounts(params.search, ["student_id"])] };
+        const [total, items] = await prisma.$transaction([
+            prisma.user.count({ where }),
+            prisma.user.findMany({
+                where,
+                select: {
+                    id: true,
+                    student_id: true,
+                    name: true,
+                    email: true,
+                    binusian_id: true,
+                    created_at: true,
+                },
+                orderBy: [{ created_at: "desc" }, { id: "desc" }],
+                skip: (params.page - 1) * params.pageSize,
+                take: params.pageSize,
+            }),
+        ]);
+        return { items, total, page: params.page, pageSize: params.pageSize };
+    }
+
+    /** Staff accounts (what the staff CSV import and insert-user create), newest first; `roleFilter` narrows to one role. */
+    static async listStaffAccounts(params: AccountListParams & { roleFilter?: (typeof staffRoles)[number] | undefined }) {
+        const where = {
+            AND: [
+                staffAccountWhere,
+                ...(params.roleFilter ? [{ role: params.roleFilter }] : []),
+                searchAccounts(params.search, ["lecturer_code"]),
+            ],
+        };
+        const [total, rows] = await prisma.$transaction([
+            prisma.user.count({ where }),
+            prisma.user.findMany({
+                where,
+                select: {
+                    id: true,
+                    lecturer_code: true,
+                    name: true,
+                    email: true,
+                    binusian_id: true,
+                    role: true,
+                    created_at: true,
+                    hopMajors: { select: { major: { select: { id: true, name: true } } } },
+                },
+                orderBy: [{ created_at: "desc" }, { id: "desc" }],
+                skip: (params.page - 1) * params.pageSize,
+                take: params.pageSize,
+            }),
+        ]);
+        const items = rows.map(({ hopMajors, ...user }) => ({
+            ...user,
+            hop_major: hopMajors.map((hm) => ({ id: hm.major.id, name: hm.major.name })),
+        }));
+        return { items, total, page: params.page, pageSize: params.pageSize };
     }
 
     /** Creates a staff account with an initial local password (and, for a HoP, their majors). */

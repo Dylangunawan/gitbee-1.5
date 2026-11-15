@@ -66,7 +66,9 @@ describe("API route table", () => {
       "POST /technology/admin/insert",
       "PATCH /technology/admin/update",
 
+      "GET /user/admin/get-staff-accounts",
       "GET /user/admin/get-student",
+      "GET /user/admin/get-student-accounts",
       "GET /user/admin/get-transaction",
       "GET /user/admin/get-user",
       "POST /user/admin/insert-user",
