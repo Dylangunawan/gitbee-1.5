@@ -55,7 +55,7 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
     try {
       const samples: File[] = [];
       for (const type of ["student", "staff"]) {
-        for (const format of ["csv", "xlsx"]) {
+        for (const format of ["csv"]) {
           const response = await fetch(
             base + "/samples/" + type + "/" + format + "?errors=" + withErrors,
             { credentials: "include" },
@@ -143,7 +143,7 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
           <span className={styles.step}>1</span>
           <div>
             <h2>Choose your files</h2>
-            <p>Upload up to four student or staff spreadsheets together.</p>
+            <p>Upload one or more student or staff spreadsheets together.</p>
           </div>
         </div>
         <div className={styles.actions}>
@@ -152,7 +152,7 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
             disabled={busy}
             onClick={() => loadSamples()}
           >
-            Load four sample files
+            Load sample files
           </button>
           <button
             className={styles.secondary}
@@ -163,8 +163,8 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
           </button>
         </div>
         <p className={styles.muted}>
-          CSV and Excel samples contain the same accounts. Repeated accounts are
-          skipped.
+          Load example students and staff, or choose your own files. Existing
+          accounts are skipped.
         </p>
         <label className={styles.dropzone}>
           <span className={styles.uploadIcon}>↑</span>
@@ -206,11 +206,29 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
             fetched records. Valid new accounts are saved even if other rows are
             invalid or duplicated.
           </p>
+          <p>
+            You can select any number of files, with up to 4,000 data rows in
+            total.
+          </p>
         </details>
+      </section>
+
+      <section
+        className={styles.card}
+        aria-label="Validate and save"
+        aria-live="polite"
+      >
+        <div className={styles.sectionHeading}>
+          <span className={styles.step}>2</span>
+          <div>
+            <h2>Validate & preview</h2>
+            <p>Review your data, then save the valid new accounts.</p>
+          </div>
+        </div>
         <div className={styles.actions}>
           <button
             className={styles.secondary}
-            disabled={!files.length || files.length > 4 || busy}
+            disabled={!files.length || busy}
             onClick={validate}
           >
             Validate & preview
@@ -234,32 +252,36 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
             {error}
           </p>
         )}
-      </section>
-
-      {preview && (
-        <section className={styles.card} aria-live="polite">
-          <h2>2. Preview your data</h2>
-          {preview.files.map((file, index) => (
-            <div className={styles.filePreview} key={index}>
-              <h3>{file.name}</h3>
-              <p>
-                {file.totalRows} rows · {file.validCount} pass field validation
-                · {file.failedRows.length} invalid
-              </p>
-              <Grid rows={file.rows} />
-              <p className={styles.muted}>
-                First 10 valid rows shown. Duplicate accounts are checked when
-                saving.
-              </p>
-              {file.failedRows.map((row) => (
-                <p className={styles.error} key={row.row_number}>
-                  Row {row.row_number}: {row.error}
+        {!preview && (
+          <p className={styles.muted}>
+            Choose files in step 1, then click Validate & preview to see their
+            rows here.
+          </p>
+        )}
+        {preview && (
+          <div>
+            {preview.files.map((file, index) => (
+              <div className={styles.filePreview} key={index}>
+                <h3>{file.name}</h3>
+                <p>
+                  {file.totalRows} rows · {file.validCount} pass field
+                  validation · {file.failedRows.length} invalid
                 </p>
-              ))}
-            </div>
-          ))}
-        </section>
-      )}
+                <Grid rows={file.rows} />
+                <p className={styles.muted}>
+                  First 10 valid rows shown. Duplicate accounts are checked when
+                  saving.
+                </p>
+                {file.failedRows.map((row) => (
+                  <p className={styles.error} key={row.row_number}>
+                    Row {row.row_number}: {row.error}
+                  </p>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {report && (
         <section className={styles.card} aria-live="polite">

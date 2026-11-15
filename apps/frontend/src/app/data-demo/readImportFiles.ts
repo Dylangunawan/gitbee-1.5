@@ -84,13 +84,17 @@ export function parseImportFile(name: string, bytes: ArrayBuffer): ImportFile {
 }
 
 export async function readImportFiles(files: File[]): Promise<ImportFile[]> {
-  if (!files.length || files.length > 4)
-    throw new Error("Choose between one and four files.");
+  if (!files.length) throw new Error("Choose at least one file.");
   const parsed = [];
+  let totalRows = 0;
   for (const file of files) {
     if (!file.size || file.size > 5 * 1024 * 1024)
       throw new Error(file.name + ": choose a nonempty file up to 5 MB.");
-    parsed.push(parseImportFile(file.name, await file.arrayBuffer()));
+    const next = parseImportFile(file.name, await file.arrayBuffer());
+    totalRows += next.rows.length;
+    if (totalRows > 4000)
+      throw new Error("Use at most 4,000 rows across the selected files.");
+    parsed.push(next);
   }
   return parsed;
 }

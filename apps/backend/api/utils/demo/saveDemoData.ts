@@ -31,10 +31,13 @@ const requestSchema = z
           })
           .strict(),
       )
-      .min(1)
-      .max(4),
+      .min(1),
   })
-  .strict();
+  .strict()
+  .refine(
+    (batch) =>
+      batch.files.reduce((sum, file) => sum + file.rows.length, 0) <= 4000,
+  );
 
 export class DemoInputError extends Error {}
 
@@ -43,7 +46,7 @@ export function validateDemoData(body: unknown) {
   if (!parsed.success) {
     // Do not echo request values (especially credentials) in errors or logs.
     throw new DemoInputError(
-      "Send 1–4 files, each with a name, student/staff type, and 1–1,000 numbered rows of text fields.",
+      "Send one or more files with a name, student/staff type, and numbered rows of text fields. Limit: 1,000 rows per file and 4,000 rows per batch.",
     );
   }
   return parsed.data.files.map((file) => {

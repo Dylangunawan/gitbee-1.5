@@ -46,10 +46,10 @@ Seeding skips a database that already has records. Restarting never clears impor
 ## Five-minute presentation
 
 1. Sign in as the demo Admin and open `/data-demo`. A fresh seed has 28 accounts.
-2. Click **Load four sample files**, or choose up to four files from `apps/backend/samples/demo/`. Mixed student/staff files are detected by their column headers.
-3. Click **Validate & preview**. The browser reads the files into row objects and posts JSON for backend validation. Each file gets its own table; passwords are hidden. Preview never writes to the database.
+2. Click **Load sample files** to load student and staff CSV examples, or choose one or more files from `apps/backend/samples/demo/`. Mixed student/staff files are detected by their column headers.
+3. Step **2 — Validate & preview** is always visible, including before selecting files. Click **Validate & preview**. The browser reads the files into row objects and posts JSON for backend validation. Each file gets its own table; passwords are hidden. Preview never writes to the database.
 4. Observe the backend's `[data-demo]` receipt log: action, filenames, row counts, and two validated rows per file. Passwords are excluded. The launcher enables this with `DEMO_IMPORT_LOG=true`; logging is off by default elsewhere.
-5. Click **Save to database**. On a fresh database, the standard four files create 8 students and 6 staff; the matching Excel copies are skipped as duplicates. Each file shows created/skipped/failed counts. The backend revalidates every row, even if preview was bypassed or the request was changed.
+5. Click **Save to database**. On a fresh database, the sample loader creates 8 students and 6 staff. Uploading matching Excel copies later skips them as duplicates. Each file shows created/skipped/failed counts. The backend revalidates every row, even if preview was bypassed or the request was changed.
 6. Click **Get Data** below the import area. The table displays freshly queried accounts, including `major_code` and `major_codes`. It shows 20 accounts per page, newest first, with pagination.
 7. Refresh the entire page and click **Get Data** again. The accounts must remain; the results are fetched from the database and do not depend on the upload preview.
 8. Reload and save the same samples: zero new accounts should be created. **Try samples with errors** demonstrates a missing name/invalid email and duplicate rows; valid new accounts still save.
@@ -72,7 +72,7 @@ lecturer_code,name,email,binusian_id,role,major_codes,password
 ```
 
 - UTF-8 CSV or `.xlsx`; older `.xls` files must be saved as `.xlsx` first.
-- Limit: 5 MB, 1,000 data rows per file, up to four files per JSON batch. Excel files must contain one worksheet and plain values. The legacy server-side file parser also caps archives at 20 MB expanded. Formulas and encrypted files are rejected.
+- Limit: 5 MB, 1,000 data rows per file, 4,000 total data rows per JSON batch, with no fixed file-count limit. Excel files must contain one worksheet and plain values. The legacy server-side file parser also caps archives at 20 MB expanded. Formulas and encrypted files are rejected.
 - Headers must match the template. All headers are required, but `binusian_id` cells may be blank. Keep identifiers as text or use an Excel number format that preserves leading zeroes.
 - Preview validates row structure and field values. Import revalidates the file, rejects unsupported HoP rows, checks duplicates against the actual database collation, hashes passwords, and inserts valid accounts.
 - The report separates created, skipped, and failed rows. Imports are partial: valid, nonduplicate rows are inserted even when other rows fail.
@@ -114,7 +114,7 @@ Example request (`Content-Type: application/json`):
 }
 ```
 
-All cell values are strings. `line` is the logical CSV record number or Excel worksheet row, with the header at row 1. The server rejects malformed envelopes, more than four files, more than 1,000 rows in a file, duplicate row numbers, or unsupported fields. Per-row field errors are reported without discarding other valid rows.
+All cell values are strings. `line` is the logical CSV record number or Excel worksheet row, with the header at row 1. The server rejects malformed envelopes, more than 4,000 rows across a batch, more than 1,000 rows in a file, duplicate row numbers, or unsupported fields. Per-row field errors are reported without discarding other valid rows.
 
 | Responsibility | File |
 | --- | --- |
@@ -168,3 +168,5 @@ The JSON round-trip update passed 182 backend tests (including real database int
 Frontend production compilation and its TypeScript phase passed. The full build remains blocked by a Windows `EPERM` directory-creation error while prerendering `/demo-login`. Frontend ESLint remains blocked before checking files by the installed dependency's missing `zod-validation-error/v4` export. These environment issues were also present in the previous demo. The development app runs successfully. Docker startup and external SSO were not retested for this update.
 
 Backend tests use `TEST_DATABASE_URL` to opt into database integration checks. Never point test commands at a database containing real data.
+
+Feedback update (2026-11-16): removed the example-derived four-file cap, made step 2 permanently visible, and simplified the sample loader to one file per account type. Targeted backend tests (9), frontend tests (12), both TypeScript checks, and targeted backend lint passed. Six-file batches and the total row limit are covered.

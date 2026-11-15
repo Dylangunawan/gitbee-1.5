@@ -77,10 +77,7 @@ test("invalid headers, oversized data, formulas and multi-sheet workbooks are re
       ),
     /1,000/,
   );
-  await assert.rejects(
-    () => readImportFiles(new Array(5).fill({})),
-    /one and four/,
-  );
+  await assert.rejects(() => readImportFiles([]), /at least one/);
   await assert.rejects(
     () =>
       readImportFiles([
@@ -118,5 +115,25 @@ test("invalid headers, oversized data, formulas and multi-sheet workbooks are re
         bytes(xlsx.write(book, { type: "buffer", bookType: "xlsx" })),
       ),
     /one worksheet/,
+  );
+});
+
+test("accepts more than four files and bounds their combined row count", async () => {
+  const small = new File(
+    [headers + "\n001,Ada,ada@example.test,,CS,secret"],
+    "student.csv",
+  );
+  assert.equal((await readImportFiles(new Array(6).fill(small))).length, 6);
+  const large = new File(
+    [
+      headers +
+        "\n" +
+        new Array(1000).fill("001,Ada,ada@example.test,,CS,secret").join("\n"),
+    ],
+    "students.csv",
+  );
+  await assert.rejects(
+    () => readImportFiles(new Array(5).fill(large)),
+    /4,000 rows/,
   );
 });
