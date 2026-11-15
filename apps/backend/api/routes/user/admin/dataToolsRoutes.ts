@@ -5,6 +5,14 @@ import { parseSpreadsheet } from "../../../utils/csv/spreadsheetParser.js";
 import { importCsvUsers } from "../../../utils/csv/csvUserImport.js";
 import { sampleFile } from "../../../utils/demo/sampleFiles.js";
 import {
+  DemoInputError,
+  validateDemoData,
+  previewDemoData,
+  logDemoReceipt,
+  saveDemoData,
+} from "../../../utils/demo/saveDemoData.js";
+import { fetchDemoData } from "../../../utils/demo/fetchDemoData.js";
+import {
   databaseOverview,
   databaseRows,
 } from "../../../utils/demo/databaseExplorer.js";
@@ -24,6 +32,48 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0 },
 }).single("file");
+
+// Register before the legacy /:type/:action multipart routes.
+for (const action of ["preview", "save"] as const) {
+  router.post("/imports/" + action, async (req, res) => {
+    if (!req.is("application/json"))
+      return sendErrorResponse(res, "Send application/json.", 415);
+    try {
+      const files = validateDemoData(req.body);
+      logDemoReceipt(files, action);
+      return sendSuccessResponse(
+        res,
+        action === "preview"
+          ? previewDemoData(files)
+          : await saveDemoData(files),
+      );
+    } catch (error) {
+      return sendErrorResponse(
+        res,
+        error instanceof DemoInputError
+          ? error.message
+          : "Database import failed. Please retry.",
+        error instanceof DemoInputError ? 400 : 500,
+      );
+    }
+  });
+}
+
+router.get("/saved-users", async (req, res) => {
+  const page = Number(req.query.page ?? 1);
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100000)
+    return sendErrorResponse(res, "Invalid page.", 400);
+  try {
+    return sendSuccessResponse(res, await fetchDemoData(page));
+  } catch {
+    return sendErrorResponse(
+      res,
+      "Could not fetch saved users. Please retry.",
+      503,
+    );
+  }
+});
+
 router.post(
   "/:type/:action",
   (req, res, next) => {
@@ -73,14 +123,12 @@ router.post(
         totalRows: validation.totalRows,
         validCount: validation.validRows.length,
         failedRows: validation.failedRows,
-        rows: validation.validRows
-          .slice(0, 10)
-          .map((row) => ({
-            line: row.row_number,
-            ...Object.fromEntries(
-              Object.entries(row.data).filter(([key]) => key !== "password"),
-            ),
-          })),
+        rows: validation.validRows.slice(0, 10).map((row) => ({
+          line: row.row_number,
+          ...Object.fromEntries(
+            Object.entries(row.data).filter(([key]) => key !== "password"),
+          ),
+        })),
       });
     }
     try {

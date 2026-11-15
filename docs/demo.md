@@ -45,16 +45,17 @@ Seeding skips a database that already has records. Restarting never clears impor
 
 ## Five-minute presentation
 
-1. Sign in as the demo Admin. Open `/data-demo`, also linked from Manage Users. A fresh seed has 28 accounts, three projects, 24 roster entries, and 20 application tables.
-2. Keep **Students** selected. Download the sample CSV or Excel file. The templates share the same column names and synthetic records.
-3. Choose `student-with-errors.xlsx` from `apps/backend/samples/demo/`, or use **Try an Excel file with errors**. Click **Validate & preview**. It contains 10 rows: nine pass field validation and one has a missing name and invalid email. No database writes occur during preview; passwords are hidden.
-4. Click **Import to database**. In a fresh demo, eight users are created, one duplicate is skipped, and one invalid row fails. The error list points to worksheet rows 10 and 11.
-5. Click **View saved users**. The live `user` table now contains 36 rows, with the imported users first. Password hashes and credential versions are excluded from the explorer.
-6. Select the same file again, preview, then import. Zero additional users are created; nine are skipped and one fails validation. Existing accounts are preserved.
-7. Switch to **Staff**, download/upload `staff-sample.csv`, preview, and import. Six staff accounts are added. Both formats use the same validation, password hashing, and database-aware duplicate detection.
-8. Open **Schema & relationships**, then expand `project_detail`, `project_technology`, and `hop_major` to explain foreign keys. Browse those tables to relate the schema to actual rows.
+1. Sign in as the demo Admin and open `/data-demo`. A fresh seed has 28 accounts.
+2. Click **Load four sample files**, or choose up to four files from `apps/backend/samples/demo/`. Mixed student/staff files are detected by their column headers.
+3. Click **Validate & preview**. The browser reads the files into row objects and posts JSON for backend validation. Each file gets its own table; passwords are hidden. Preview never writes to the database.
+4. Observe the backend's `[data-demo]` receipt log: action, filenames, row counts, and two validated rows per file. Passwords are excluded. The launcher enables this with `DEMO_IMPORT_LOG=true`; logging is off by default elsewhere.
+5. Click **Save to database**. On a fresh database, the standard four files create 8 students and 6 staff; the matching Excel copies are skipped as duplicates. Each file shows created/skipped/failed counts. The backend revalidates every row, even if preview was bypassed or the request was changed.
+6. Click **Get Data** below the import area. The table displays freshly queried accounts, including `major_code` and `major_codes`. It shows 20 accounts per page, newest first, with pagination.
+7. Refresh the entire page and click **Get Data** again. The accounts must remain; the results are fetched from the database and do not depend on the upload preview.
+8. Reload and save the same samples: zero new accounts should be created. **Try samples with errors** demonstrates a missing name/invalid email and duplicate rows; valid new accounts still save.
+9. The existing **Browse database** and **Schema & relationships** tabs remain available for the broader database presentation.
 
-If these samples were already imported during a previous demonstration, the duplicate counts will reflect that. Use a fresh dedicated demo database, or change the sample email, student/lecturer code, and optional Binusian ID together for a new batch.
+Use a fresh dedicated demo database to verify the initial counts. Existing users are preserved, including existing accounts whose major codes predate this migration and are still NULL; duplicate import does not backfill or overwrite them.
 
 ## File format and behavior
 
@@ -71,13 +72,61 @@ lecturer_code,name,email,binusian_id,role,major_codes,password
 ```
 
 - UTF-8 CSV or `.xlsx`; older `.xls` files must be saved as `.xlsx` first.
-- Limit: 5 MB, 1,000 data rows per upload. Excel archives are capped at 20 MB expanded, with one worksheet and plain values. Formulas and encrypted files are rejected.
+- Limit: 5 MB, 1,000 data rows per file, up to four files per JSON batch. Excel files must contain one worksheet and plain values. The legacy server-side file parser also caps archives at 20 MB expanded. Formulas and encrypted files are rejected.
 - Headers must match the template. All headers are required, but `binusian_id` cells may be blank. Keep identifiers as text or use an Excel number format that preserves leading zeroes.
 - Preview validates row structure and field values. Import revalidates the file, rejects unsupported HoP rows, checks duplicates against the actual database collation, hashes passwords, and inserts valid accounts.
 - The report separates created, skipped, and failed rows. Imports are partial: valid, nonduplicate rows are inserted even when other rows fail.
 - Staff roles supported by this import are Lecturer, Admin, and SCC. HoP accounts are seeded with a `hop_major` relation for the demo, but bulk HoP import remains unsupported because the schema has no major-code lookup.
-- `major_code` / `major_codes` are validated as text but not persisted. There is no student-to-major foreign key in the current schema. Account import does not create class roster entries or projects.
+- `major_code` / `major_codes` are stored in nullable text columns on `user`. They preserve the imported source values without creating major assignments. Account import does not create class roster entries or projects.
 - The existing legacy Excel endpoints remain unchanged. This workspace uses the new protected `/api/user/admin/data-tools` endpoints for both formats.
+
+## JSON API contract and code map
+
+All routes below require a current Admin session cookie and return `Cache-Control: no-store`.
+
+- `POST /api/user/admin/data-tools/imports/preview`: validates a JSON batch and returns per-file counts, validation errors, and up to ten preview rows without passwords. Does not write.
+- `POST /api/user/admin/data-tools/imports/save`: receives the same JSON shape, validates again, maps valid rows to Prisma `User` objects, hashes passwords, and inserts accounts. Files are processed in order so later files see earlier duplicates. Partial imports retain per-file errors.
+- `GET /api/user/admin/data-tools/saved-users?page=1`: queries `prisma.user.findMany` and `count`, returning `{ rows, total, page, pageSize }` inside the standard `{ message, status, data }` response. Passwords and credential versions are never selected. Every click makes a new request; a read failure returns HTTP 503 and the UI removes stale results.
+
+Example request (`Content-Type: application/json`):
+
+```json
+{
+  "files": [
+    {
+      "name": "student-sample.csv",
+      "type": "student",
+      "rows": [
+        {
+          "line": 2,
+          "data": {
+            "nim": "001234",
+            "name": "Demo Student",
+            "email": "demo.student@example.test",
+            "binusian_id": "",
+            "major_code": "COMP",
+            "password": "GitbeeDummy#2026"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+All cell values are strings. `line` is the logical CSV record number or Excel worksheet row, with the header at row 1. The server rejects malformed envelopes, more than four files, more than 1,000 rows in a file, duplicate row numbers, or unsupported fields. Per-row field errors are reported without discarding other valid rows.
+
+| Responsibility | File |
+| --- | --- |
+| Browser file reading and JSON construction | `apps/frontend/src/app/data-demo/readImportFiles.ts` |
+| Preview/save controls and Get Data table | `apps/frontend/src/app/data-demo/ImportWorkspace.tsx` |
+| Save module: JSON validation, receipt logging, persistence orchestration | `apps/backend/api/utils/demo/saveDemoData.ts` |
+| Existing ORM mapping, hashing, duplicate handling and insert | `apps/backend/api/utils/csv/csvUserImport.ts` |
+| Fetch module: ORM queries with explicit safe fields | `apps/backend/api/utils/demo/fetchDemoData.ts` |
+| HTTP routes | `apps/backend/api/routes/user/admin/dataToolsRoutes.ts` |
+| Nullable major-code columns | `apps/backend/api/prisma/migrations/20261115000000_preserve_imported_major_codes/migration.sql` |
+
+`npm run demo` deploys the new migration automatically. For another environment, generate Prisma and deploy migrations before running the updated code. The migration adds nullable columns and does not modify existing rows. JSON is the transport format; the database stores typed account columns rather than a single JSON document.
 
 ## Database presentation
 
@@ -114,8 +163,8 @@ erDiagram
 
 ## Verification
 
-The implementation was tested with the backend suite, including real database tests on a separate `gitbee_demo_test` MariaDB database; eight frontend tests; both TypeScript checks; and a browser walkthrough of local login, Excel and CSV preview/import, persisted rows, and schema details. The seed was also rerun to confirm it preserves existing records. Docker startup and external SSO providers were not tested in this environment.
+The JSON round-trip update passed 182 backend tests (including real database integration checks on `gitbee_demo_roundtrip_test`), 11 frontend tests, both TypeScript checks, and targeted backend lint. The browser walkthrough on a fresh `gitbee_demo_roundtrip` database confirmed four-file preview, JSON save, 14 created accounts with 14 duplicates skipped, persisted records after refresh, major-code values, pagination, and invalid-row reports. Receipt logs were observed with sample rows and without password fields.
 
-Frontend production compilation and its TypeScript phase passed, but the full build was blocked by a Windows `EPERM` directory-creation error during static export. Frontend ESLint was blocked before checking files by an installed dependency's missing `zod-validation-error/v4` export. Backend targeted lint passed. The local development demo runs successfully.
+Frontend production compilation and its TypeScript phase passed. The full build remains blocked by a Windows `EPERM` directory-creation error while prerendering `/demo-login`. Frontend ESLint remains blocked before checking files by the installed dependency's missing `zod-validation-error/v4` export. These environment issues were also present in the previous demo. The development app runs successfully. Docker startup and external SSO were not retested for this update.
 
 Backend tests use `TEST_DATABASE_URL` to opt into database integration checks. Never point test commands at a database containing real data.

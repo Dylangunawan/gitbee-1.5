@@ -32,6 +32,8 @@ export interface NewCsvUser {
   binusian_id: string | null;
   student_id: string | null;
   lecturer_code: string | null;
+  major_code?: string | null;
+  major_codes?: string | null;
 }
 
 export type CsvUserIdentity = Pick<
@@ -132,6 +134,8 @@ function toNewUser(
       binusian_id: row.binusian_id,
       student_id: row.nim,
       lecturer_code: null,
+      major_code: row.major_code,
+      major_codes: null,
     };
   }
   return {
@@ -143,6 +147,8 @@ function toNewUser(
     binusian_id: row.binusian_id,
     student_id: null,
     lecturer_code: row.lecturer_code,
+    major_code: null,
+    major_codes: row.major_codes,
   };
 }
 

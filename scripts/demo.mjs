@@ -24,6 +24,7 @@ const env = {
   JWT_SECRET: readFileSync(secretPath, "utf8"),
   COOKIE_NAME: "gitbee_demo_token",
   BYPASS_SSO: "false",
+  DEMO_IMPORT_LOG: "true",
   NEXT_PUBLIC_COOKIE_NAME: "gitbee_demo_token",
   NEXT_PUBLIC_BACKEND_API: "http://localhost:5001/api/",
   NEXT_PUBLIC_BYPASS_SSO: "false",

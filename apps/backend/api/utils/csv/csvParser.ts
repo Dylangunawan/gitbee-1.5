@@ -61,6 +61,11 @@ const staffCsvRowSchema = z.object({
   password: requiredText(255),
 });
 
+export const csvRowSchemas = {
+  student: studentCsvRowSchema,
+  staff: staffCsvRowSchema,
+};
+
 // One schema per file type; its keys are the required header columns.
 const csvFileTypes = {
   student: { schema: studentCsvRowSchema, identifierColumn: "nim" },

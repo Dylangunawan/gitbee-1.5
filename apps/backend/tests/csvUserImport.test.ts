@@ -64,6 +64,8 @@ describe("CSV user import", () => {
       binusian_id: null,
       student_id: "2501959296",
       lecturer_code: null,
+      major_code: "COMP",
+      major_codes: null,
     });
     assert.equal(await verifyPassword("secret", user.password), true);
   });

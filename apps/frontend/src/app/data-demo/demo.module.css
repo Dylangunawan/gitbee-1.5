@@ -699,3 +699,10 @@
     flex-wrap: wrap;
   }
 }
+.importWorkspace {
+  display: grid;
+  gap: 24px;
+}
+.filePreview {
+  margin-top: 24px;
+}
