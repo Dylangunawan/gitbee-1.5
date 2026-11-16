@@ -32,16 +32,27 @@ const adminCookie = cookieFor(adminAccount);
 const studentsPath = "/api/user/admin/get-student-accounts";
 const staffPath = "/api/user/admin/get-staff-accounts";
 
-// The service counts and pages the matching ids in two raw queries inside one
-// transaction, then loads that page's rows by id.
+// The service counts and pages the matching ids in two raw queries, then loads
+// that page's rows by id, all through one interactive transaction's client.
 type RawQuery = { sql: string; values: unknown[] };
 type RowQuery = { where?: unknown; select?: Record<string, unknown> };
 let rawQueries: RawQuery[] = [];
 let rowQueries: RowQuery[] = [];
+let transactionOptions: unknown[] = [];
 let total = 0;
 let pageIds: number[] = [];
 let rows: unknown[] = [];
 let failWith: Error | null = null;
+
+const transactionClient = {
+  $queryRaw: async (query: RawQuery) => {
+    rawQueries.push({ sql: query.sql, values: query.values });
+    return query.sql.includes("COUNT(*)") ? [{ total: BigInt(total) }] : pageIds.map((id) => ({ id }));
+  },
+  user: {
+    findMany: async (query: RowQuery) => { rowQueries.push(query); return rows; },
+  },
+};
 
 const countQuery = () => rawQueries.find((query) => query.sql.includes("COUNT(*)"));
 const pageQuery = () => rawQueries.find((query) => query.sql.includes("ORDER BY"));
@@ -57,18 +68,23 @@ function stub<T extends object>(target: T, key: keyof T, value: unknown) {
 beforeEach(() => {
   rawQueries = [];
   rowQueries = [];
+  transactionOptions = [];
   total = 0;
   pageIds = [];
   rows = [];
   failWith = null;
   stub(prisma.user, "findUnique", async ({ where }: { where: { id?: number } }) =>
     where.id === adminAccount.id ? adminAccount : where.id === lecturerAccount.id ? lecturerAccount : null);
-  stub(prisma, "$queryRaw", (query: RawQuery) => { rawQueries.push({ sql: query.sql, values: query.values }); return query; });
-  stub(prisma, "$transaction", async () => {
+  stub(prisma, "$transaction", async (work: unknown, options: unknown) => {
+    assert.equal(typeof work, "function", "an interactive transaction, so every read shares its client");
+    transactionOptions.push(options);
     if (failWith) throw failWith;
-    return [[{ total: BigInt(total) }], pageIds.map((id) => ({ id }))];
+    return (work as (tx: typeof transactionClient) => Promise<unknown>)(transactionClient);
   });
-  stub(prisma.user, "findMany", (query: RowQuery) => { rowQueries.push(query); return rows; });
+  // Reads outside the page's transaction could see a different snapshot.
+  const outsideTransaction = () => { throw new Error("the account lists must read through the transaction client"); };
+  stub(prisma, "$queryRaw", outsideTransaction);
+  stub(prisma.user, "findMany", outsideTransaction);
 });
 afterEach(() => {
   for (const restore of restores.splice(0).reverse()) restore();
@@ -105,6 +121,21 @@ describe("account lists for the CSV imports", () => {
     assert.deepEqual(countQuery()?.values, pageQuery()?.values.slice(0, -2), "counts with the same conditions it pages with");
     assert.deepEqual(rowQueries[0]?.where, { id: { in: [7] } });
     assert.ok(!("password" in (rowQueries[0]?.select ?? {})), "never selects the password hash");
+  });
+
+  it("reads the count, the page and the rows in one REPEATABLE READ transaction", async () => {
+    total = 1;
+    pageIds = [9];
+    rows = [{ id: 9, lecturer_code: "D1", name: "N", email: "n@example.com", binusian_id: null, role: "Lecturer", created_at: new Date(0), hopMajors: [] }];
+
+    for (const path of [studentsPath, staffPath]) {
+      const response = await request(app).get(path).set("Cookie", adminCookie);
+      assert.equal(response.status, 200, path);
+    }
+
+    assert.deepEqual(transactionOptions, [{ isolationLevel: "RepeatableRead" }, { isolationLevel: "RepeatableRead" }]);
+    assert.equal(rawQueries.length, 4, "a count and a page of ids per request, both inside the transaction");
+    assert.equal(rowQueries.length, 2, "the rows load inside the same transaction");
   });
 
   it("keeps the rows in page order, whatever order they are loaded in", async () => {

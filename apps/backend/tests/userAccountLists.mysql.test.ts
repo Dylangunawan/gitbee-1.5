@@ -40,6 +40,40 @@ const isNewestFirst = (items: { id: number; created_at: string }[]) => items.eve
   return !next || item.created_at > next.created_at || (item.created_at === next.created_at && item.id > next.id);
 });
 
+type FindMany = (...args: unknown[]) => Promise<unknown>;
+type UserDelegate = { findMany: FindMany };
+type Client = { $transaction: (...args: unknown[]) => Promise<unknown>; user: UserDelegate };
+
+/**
+ * Runs `hook` just before the next user.findMany that loads a page's rows,
+ * whether that query runs inside a transaction or on its own, then lets it
+ * run. Returns a function that removes the hook.
+ */
+function beforeRowsLoad(hook: () => Promise<void>) {
+  const client = prisma as unknown as Client;
+  const originalTransaction = client.$transaction;
+  const originalFindMany = client.user.findMany;
+  const withHook = (user: UserDelegate): FindMany => async (...args) => {
+    await hook();
+    return user.findMany(...args);
+  };
+  const withHookedUser = (tx: Client) => new Proxy(tx, {
+    get: (target, property, receiver) => {
+      const value = Reflect.get(target, property, receiver);
+      return property === "user" ? { ...(value as UserDelegate), findMany: withHook(value as UserDelegate) } : value;
+    },
+  });
+
+  client.user.findMany = withHook({ findMany: originalFindMany.bind(client.user) });
+  client.$transaction = (work: unknown, ...options: unknown[]) => typeof work === "function"
+    ? originalTransaction.call(client, (tx: Client) => (work as (tx: Client) => Promise<unknown>)(withHookedUser(tx)), ...options)
+    : originalTransaction.call(client, work, ...options);
+  return () => {
+    client.$transaction = originalTransaction;
+    client.user.findMany = originalFindMany;
+  };
+}
+
 before(async () => {
   if (!databaseUrl) return;
   majorId = (await prisma.major.create({ data: { name: `Major ${suffix}` } })).id;
@@ -191,5 +225,38 @@ describe("account lists against MySQL", { skip: databaseUrl ? false : "set TEST_
       assert.equal(past.status, 400, path);
       assert.deepEqual(past.body.errors, ["page is too high: (page - 1) × pageSize must be at most 4294967295"]);
     }
+  });
+
+  it("keeps a page consistent when an account's role changes while it is being read", async () => {
+    const email = `race-${suffix}@${domain}`;
+    const target = await prisma.user.create({
+      data: { email, name: "Race Lecturer", role: "Lecturer", lecturer_code: `RACE-${suffix}` },
+    });
+
+    // After the count and the page of ids are read, and before the rows load,
+    // another admin makes the account an SCC through the real route.
+    let roleChanged = false;
+    const removeHook = beforeRowsLoad(async () => {
+      if (roleChanged) return;
+      roleChanged = true;
+      const response = await request(app).patch("/api/user/admin/update-role")
+        .set("Cookie", adminCookie).send({ id: String(target.id), role: "SCC" });
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+    });
+    let body: ListBody<StaffItem>;
+    try {
+      body = await list<StaffItem>("get-staff-accounts", { roleFilter: "Lecturer", search: email });
+    } finally {
+      removeHook();
+    }
+
+    // The page is one snapshot: the account as it was when the page was chosen.
+    assert.ok(roleChanged, "the role change ran mid-request");
+    assert.deepEqual(body.items.map((item) => [item.email, item.role]), [[email, "Lecturer"]]);
+    assert.equal(body.total, 1);
+
+    // The next request sees the change.
+    assert.equal((await list<StaffItem>("get-staff-accounts", { roleFilter: "Lecturer", search: email })).total, 0);
+    assert.equal((await list<StaffItem>("get-staff-accounts", { roleFilter: "SCC", search: email })).total, 1);
   });
 });

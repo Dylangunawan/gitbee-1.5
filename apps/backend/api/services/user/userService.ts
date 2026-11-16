@@ -38,26 +38,34 @@ const matchesSearch = (search: string | undefined, idColumn: Prisma.Sql) => {
     return Prisma.sql`(${idColumn} LIKE ${term} ESCAPE '!' OR binusian_id LIKE ${term} ESCAPE '!' OR email LIKE ${term} ESCAPE '!' OR name LIKE ${term} ESCAPE '!')`;
 };
 
+type RawQueryClient = Pick<typeof prisma, "$queryRaw">;
+
 /**
  * The ids on one page of the user rows matching `condition`, newest first, and
  * how many rows match in all. Which accounts count as students or staff is
  * decided in SQL (utils/auth/localAccountSql.ts), which Prisma's own filters
  * cannot express, so the matching, counting and paging happen here and the
- * caller loads the rows by id.
+ * caller loads the rows by id, in the same `pageSnapshot` transaction.
  */
-async function pageOfUserIds(condition: Prisma.Sql, params: AccountListParams) {
+async function pageOfUserIds(tx: RawQueryClient, condition: Prisma.Sql, params: AccountListParams) {
     // BigInt, because MySQL rejects a LIMIT or OFFSET parameter sent as a JS
     // number once it no longer fits in 32 bits.
     const take = BigInt(params.pageSize);
     const skip = BigInt(params.page - 1) * take;
-    const [counted, page] = await prisma.$transaction([
-        prisma.$queryRaw<{ total: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS total FROM user WHERE ${condition}`),
-        prisma.$queryRaw<{ id: number }[]>(
-            Prisma.sql`SELECT id FROM user WHERE ${condition} ORDER BY created_at DESC, id DESC LIMIT ${take} OFFSET ${skip}`
-        ),
-    ]);
+    const counted = await tx.$queryRaw<{ total: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS total FROM user WHERE ${condition}`);
+    const page = await tx.$queryRaw<{ id: number }[]>(
+        Prisma.sql`SELECT id FROM user WHERE ${condition} ORDER BY created_at DESC, id DESC LIMIT ${take} OFFSET ${skip}`
+    );
     return { ids: page.map((row) => row.id), total: Number(counted[0]?.total ?? 0) };
 }
+
+/**
+ * Options for the transaction that reads one page: the count, the page of ids
+ * and the rows themselves. Under REPEATABLE READ all three see the snapshot
+ * taken at the first read, so an account changed meanwhile (say, from Lecturer
+ * to SCC) can't come back on a page it no longer belongs to.
+ */
+const pageSnapshot = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead };
 
 /** Rows loaded by id come back in no particular order; this puts them back in page order. */
 const inPageOrder = <T extends { id: number }>(rows: T[], ids: number[]) => {
@@ -124,24 +132,24 @@ export default class UserService {
      * page at a time: exactly the accounts login signs in as students.
      */
     static async listStudentAccounts(params: AccountListParams) {
-        const { ids, total } = await pageOfUserIds(
-            Prisma.sql`${isStudentAccount} AND ${matchesSearch(params.search, Prisma.sql`student_id`)}`,
-            params
-        );
-        const rows = ids.length === 0
-            ? []
-            : await prisma.user.findMany({
-                where: { id: { in: ids } },
-                select: {
-                    id: true,
-                    student_id: true,
-                    name: true,
-                    email: true,
-                    binusian_id: true,
-                    created_at: true,
-                },
-            });
-        return { items: inPageOrder(rows, ids), total, page: params.page, pageSize: params.pageSize };
+        const condition = Prisma.sql`${isStudentAccount} AND ${matchesSearch(params.search, Prisma.sql`student_id`)}`;
+        return prisma.$transaction(async (tx) => {
+            const { ids, total } = await pageOfUserIds(tx, condition, params);
+            const rows = ids.length === 0
+                ? []
+                : await tx.user.findMany({
+                    where: { id: { in: ids } },
+                    select: {
+                        id: true,
+                        student_id: true,
+                        name: true,
+                        email: true,
+                        binusian_id: true,
+                        created_at: true,
+                    },
+                });
+            return { items: inPageOrder(rows, ids), total, page: params.page, pageSize: params.pageSize };
+        }, pageSnapshot);
     }
 
     /**
@@ -150,30 +158,30 @@ export default class UserService {
      * the list to one role.
      */
     static async listStaffAccounts(params: AccountListParams & { roleFilter?: (typeof staffRoles)[number] | undefined }) {
-        const { ids, total } = await pageOfUserIds(
-            Prisma.sql`${isStaffAccount} AND ${params.roleFilter ? roleIs(params.roleFilter) : Prisma.sql`TRUE`} AND ${matchesSearch(params.search, Prisma.sql`lecturer_code`)}`,
-            params
-        );
-        const rows = ids.length === 0
-            ? []
-            : await prisma.user.findMany({
-                where: { id: { in: ids } },
-                select: {
-                    id: true,
-                    lecturer_code: true,
-                    name: true,
-                    email: true,
-                    binusian_id: true,
-                    role: true,
-                    created_at: true,
-                    hopMajors: { select: { major: { select: { id: true, name: true } } } },
-                },
-            });
-        const items = inPageOrder(rows, ids).map(({ hopMajors, ...user }) => ({
-            ...user,
-            hop_major: hopMajors.map((hm) => ({ id: hm.major.id, name: hm.major.name })),
-        }));
-        return { items, total, page: params.page, pageSize: params.pageSize };
+        const condition = Prisma.sql`${isStaffAccount} AND ${params.roleFilter ? roleIs(params.roleFilter) : Prisma.sql`TRUE`} AND ${matchesSearch(params.search, Prisma.sql`lecturer_code`)}`;
+        return prisma.$transaction(async (tx) => {
+            const { ids, total } = await pageOfUserIds(tx, condition, params);
+            const rows = ids.length === 0
+                ? []
+                : await tx.user.findMany({
+                    where: { id: { in: ids } },
+                    select: {
+                        id: true,
+                        lecturer_code: true,
+                        name: true,
+                        email: true,
+                        binusian_id: true,
+                        role: true,
+                        created_at: true,
+                        hopMajors: { select: { major: { select: { id: true, name: true } } } },
+                    },
+                });
+            const items = inPageOrder(rows, ids).map(({ hopMajors, ...user }) => ({
+                ...user,
+                hop_major: hopMajors.map((hm) => ({ id: hm.major.id, name: hm.major.name })),
+            }));
+            return { items, total, page: params.page, pageSize: params.pageSize };
+        }, pageSnapshot);
     }
 
     /** Creates a staff account with an initial local password (and, for a HoP, their majors). */
