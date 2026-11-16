@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Request, Response } from "express";
-import { sendErrorResponse, sendServiceError, sendSuccessResponse } from "../../utils/response/response.js";
+import type { NextFunction, Request, Response } from "express";
+import { sendErrorResponse, sendSuccessResponse } from "../../utils/response/response.js";
 import validateSchema from "../../utils/validator/validateSchema.js";
 import ProjectService from "../../services/project/projectService.js";
 import ProjectDashboardService from "../../services/project/projectDashboardService.js";
@@ -11,8 +11,17 @@ const classQuery = {
     class: z.string()
 };
 
+const positiveIntegerQuery = z.string()
+    .regex(/^\d+$/, "Expected a positive integer")
+    .refine((value) => Number.isSafeInteger(Number(value)) && Number(value) > 0, "Expected a positive safe integer");
+const optionalPositiveIntegerQuery = z.preprocess(
+    (value: unknown) => value === "" ? undefined : value,
+    positiveIntegerQuery.optional()
+);
+const binaryQuery = z.enum(["0", "1"]);
+
 export default class ProjectHandler {
-    static async submitProject(req: Request, res: Response) {
+    static async submitProject(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({
                 lecturer_id: z.string(),
@@ -32,7 +41,10 @@ export default class ProjectHandler {
                 major_id: z.number(),
                 gallery: z.array(z.string()),
                 group_members: z.array(z.string()).optional(),
-                technology_ids: z.array(z.number()),
+                technology_ids: z.array(z.number()).refine(
+                    (ids) => new Set(ids).size === ids.length,
+                    "Duplicate technology IDs are not allowed"
+                ),
                 group: z.number()
             });
 
@@ -44,17 +56,17 @@ export default class ProjectHandler {
             const requester = res.locals.authPayload as { nim?: unknown } | undefined;
             sendSuccessResponse(res, await ProjectService.submitProject(validationResult.data, requester?.nim));
         } catch (error) {
-            sendServiceError(res, error, "Insert Failed");
+            next(error);
         }
     }
 
-    static async listExploreProjects(req: Request, res: Response) {
+    static async listExploreProjects(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({
                 search: z.string().optional(),
-                categoryFilter: z.string().optional(),
-                majorFilter: z.string().optional(),
-                technologyFilter: z.string().optional(),
+                categoryFilter: optionalPositiveIntegerQuery,
+                majorFilter: optionalPositiveIntegerQuery,
+                technologyFilter: optionalPositiveIntegerQuery,
                 semester_id: z.string().optional()
             });
 
@@ -65,37 +77,37 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectService.listExploreProjects(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async getProject(req: Request, res: Response) {
+    static async getProject(req: Request, res: Response, next: NextFunction) {
         try {
-            const validationResult = validateSchema(z.object({ id: z.string() }), req.query);
+            const validationResult = validateSchema(z.object({ id: positiveIntegerQuery }), req.query);
             if (validationResult.error) {
                 return sendErrorResponse(res, validationResult.message);
             }
 
             sendSuccessResponse(res, await ProjectService.getProjectDetail(Number(validationResult.data.id)));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async toggleProjectDisabled(req: Request, res: Response) {
+    static async toggleProjectDisabled(req: Request, res: Response, next: NextFunction) {
         try {
-            const validationResult = validateSchema(z.object({ project_id: z.string() }), req.query);
+            const validationResult = validateSchema(z.object({ project_id: positiveIntegerQuery }), req.query);
             if (validationResult.error) {
                 return sendErrorResponse(res, validationResult.message);
             }
 
             sendSuccessResponse(res, await ProjectService.toggleProjectDisabled(Number(validationResult.data.project_id)));
         } catch (error) {
-            sendServiceError(res, error, "Unknown Error");
+            next(error);
         }
     }
 
-    static async listLecturerClassProjects(req: Request, res: Response) {
+    static async listLecturerClassProjects(req: Request, res: Response, next: NextFunction) {
         try {
             const validationResult = validateSchema(z.object(classQuery), req.query);
             if (validationResult.error) {
@@ -104,11 +116,11 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectService.listLecturerClassProjects(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async listLecturerGradedProjects(req: Request, res: Response) {
+    static async listLecturerGradedProjects(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({
                 semester_id: z.string().optional(),
@@ -123,11 +135,11 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectService.listLecturerGradedProjects(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async listStudentClassProjects(req: Request, res: Response) {
+    static async listStudentClassProjects(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({ ...classQuery, student_id: z.string() });
 
@@ -138,11 +150,11 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectService.listStudentClassProjects(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async listStudentProjects(req: Request, res: Response) {
+    static async listStudentProjects(req: Request, res: Response, next: NextFunction) {
         try {
             const validationResult = validateSchema(z.object({ student_id: z.string() }), req.query);
             if (validationResult.error) {
@@ -151,16 +163,16 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectService.listStudentProjects(validationResult.data.student_id));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async getAdminDashboard(req: Request, res: Response) {
+    static async getAdminDashboard(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({
                 search: z.string().optional(),
-                majorFilter: z.string().optional(),
-                categoryFilter: z.string().optional(),
+                majorFilter: optionalPositiveIntegerQuery,
+                categoryFilter: optionalPositiveIntegerQuery,
                 semester_id: z.string().optional()
             });
 
@@ -171,16 +183,16 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectDashboardService.getAdminDashboard(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async getHopDashboard(req: Request, res: Response) {
+    static async getHopDashboard(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({
-                major_id: z.string(),
+                major_id: positiveIntegerQuery,
                 semester_id: z.string(),
-                is_outstanding: z.string().optional(),
+                is_outstanding: binaryQuery.optional(),
                 search: z.string().optional()
             });
 
@@ -191,16 +203,16 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectDashboardService.getHopDashboard(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 
-    static async getSccDashboard(req: Request, res: Response) {
+    static async getSccDashboard(req: Request, res: Response, next: NextFunction) {
         try {
             const schema = z.object({
-                major_id: z.string().optional(),
+                major_id: optionalPositiveIntegerQuery,
                 semester_id: z.string(),
-                is_recommended: z.string().optional(),
+                is_recommended: binaryQuery.optional(),
                 search: z.string().optional()
             });
 
@@ -211,7 +223,7 @@ export default class ProjectHandler {
 
             sendSuccessResponse(res, await ProjectDashboardService.getSccDashboard(validationResult.data));
         } catch (error) {
-            sendServiceError(res, error, "Fetch Failed");
+            next(error);
         }
     }
 }
