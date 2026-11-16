@@ -189,6 +189,29 @@ describe("account lists for the CSV imports", () => {
     assert.equal(rawQueries.length, 0);
   });
 
+  it("rejects a page that would skip more than 4294967295 rows, and allows the last one", async () => {
+    for (const path of [studentsPath, staffPath]) {
+      for (const [page, pageSize, status] of [
+        ["4294967296", "1", 200],
+        ["4294967297", "1", 400],
+        ["21474837", "200", 200],
+        ["21474838", "200", 400],
+      ] as const) {
+        const response = await request(app).get(path).query({ page, pageSize }).set("Cookie", adminCookie);
+        assert.equal(response.status, status, `${path} page=${page} pageSize=${pageSize}`);
+        if (status === 400) {
+          assert.deepEqual(response.body.errors, ["page is too high: (page - 1) × pageSize must be at most 4294967295"]);
+        }
+      }
+    }
+  });
+
+  it("sends the largest allowed offset to the database unchanged", async () => {
+    await request(app).get(studentsPath).query({ page: "4294967296", pageSize: "1" }).set("Cookie", adminCookie);
+
+    assert.deepEqual(pageQuery()?.values.slice(-2), [1n, 4294967295n]);
+  });
+
   it("answers a database failure with a generic 500", async () => {
     failWith = new Error("connect ECONNREFUSED 10.0.0.5:3306");
 

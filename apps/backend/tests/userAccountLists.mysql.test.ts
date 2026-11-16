@@ -176,4 +176,20 @@ describe("account lists against MySQL", { skip: databaseUrl ? false : "set TEST_
 
     assert.deepEqual(body.items.map((item) => item.email), [`${marker}-1@${domain}`]);
   });
+
+  it("pages up to the largest offset without wrapping round, and rejects pages past it", async () => {
+    for (const [path, search] of [["get-student-accounts", `s1@${domain}`], ["get-staff-accounts", `lec@${domain}`]] as const) {
+      const first = await list<StudentItem>(path, { search, pageSize: "1" });
+      assert.equal(first.items.length, 1, path);
+
+      // Page 4294967296 skips 4294967295 rows, the most allowed: an empty page, not page 1 again.
+      const last = await list<StudentItem>(path, { search, pageSize: "1", page: "4294967296" });
+      assert.deepEqual([last.items.length, last.total], [0, 1], path);
+
+      const past = await request(app).get(`/api/user/admin/${path}`)
+        .query({ search, pageSize: "1", page: "4294967297" }).set("Cookie", adminCookie);
+      assert.equal(past.status, 400, path);
+      assert.deepEqual(past.body.errors, ["page is too high: (page - 1) × pageSize must be at most 4294967295"]);
+    }
+  });
 });

@@ -15,15 +15,27 @@ import ClassRosterService from "../../services/class/classRosterService.js";
 
 const searchQuery = z.object({ search: z.string().optional() });
 
+// The furthest a list can be paged: (page - 1) × pageSize, the rows skipped,
+// is at most 2^32 - 1. Prisma's query compiler wraps a larger skip round to the
+// first rows, so a page past this gets a 400 whatever the query looks like.
+export const MAX_ACCOUNT_LIST_OFFSET = 4_294_967_295;
+
 // Query for the paged account lists. A blank search means no filter.
-const accountListQuery = z.object({
+const accountListShape = {
     search: z.string().trim().max(150).optional().transform((value) => value || undefined),
     page: z.coerce.number().int().min(1).default(1),
     pageSize: z.coerce.number().int().min(1).max(200).default(50),
-});
-const staffAccountListQuery = accountListQuery.extend({
-    roleFilter: z.enum(staffRoles).optional(),
-});
+};
+const offsetWithinLimit = (query: { page: number; pageSize: number }) =>
+    (query.page - 1) * query.pageSize <= MAX_ACCOUNT_LIST_OFFSET;
+const offsetLimitError = {
+    error: `too high: (page - 1) × pageSize must be at most ${MAX_ACCOUNT_LIST_OFFSET}`,
+    path: ["page"],
+};
+const accountListQuery = z.object(accountListShape).refine(offsetWithinLimit, offsetLimitError);
+const staffAccountListQuery = z
+    .object({ ...accountListShape, roleFilter: z.enum(staffRoles).optional() })
+    .refine(offsetWithinLimit, offsetLimitError);
 
 /** Admin endpoints under /user/admin: staff accounts, user imports, and the class lists imported from Excel. */
 export default class UserHandler {

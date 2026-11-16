@@ -83,7 +83,7 @@ These read the accounts back so the UI can show what an import created. Both are
 | Parameter | Default | Rules |
 | --- | --- | --- |
 | `search` | none | Up to 150 characters; blank means no filter. Matches part of the NIM or lecturer code, Binusian ID, email or name, ignoring case. `%` and `_` match themselves, not any character. |
-| `page` | `1` | Integer, 1 or more |
+| `page` | `1` | Integer, 1 or more. The rows skipped, (page − 1) × pageSize, can be at most 4294967295; a page past that gets `400`. |
 | `pageSize` | `50` | Integer, 1 to 200 |
 | `roleFilter` | none | Staff only: `Lecturer`, `Admin`, `SCC` or `HoP` |
 
@@ -122,7 +122,7 @@ Staff items have `lecturer_code` and `role` instead of `student_id`, plus `hop_m
   "hop_major": [{ "id": 6, "name": "Computer Science" }] }
 ```
 
-**Errors.** `400` with a list of problems (for example `["pageSize is Too big: expected number to be <=200"]`), `401` / `403` as above, `500` `Fetch Failed`.
+**Errors.** `400` with a list of problems (for example `["pageSize is Too big: expected number to be <=200"]` or `["page is too high: (page - 1) × pageSize must be at most 4294967295"]`), `401` / `403` as above, `500` `Fetch Failed`.
 
 **Calling them from the frontend.**
 
