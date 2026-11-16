@@ -30,10 +30,10 @@ All four need an admin session: the session cookie (`COOKIE_NAME`, sent with `cr
 Row rules:
 
 - Required: everything except `binusian_id`. A blank `binusian_id` is stored as NULL.
-- Maximum lengths match the `user` table: `nim` and `lecturer_code` 50, `name` 150, `email` 150, `binusian_id` 150, `password` 255.
+- Maximum lengths match the `user` table: `nim`, `lecturer_code` and `major_code` 50, `name` 150, `email` 150, `binusian_id` 150, `password` and `major_codes` 255.
 - `email` must be a valid address.
 - `role` (staff) is one of Lecturer, Admin, SCC or HoP, in any case.
-- `major_code` / `major_codes` are required but not stored yet: majors have no codes to match them against. For the same reason, HoP rows are rejected.
+- `major_code` / `major_codes` are required and stored as source text. They do not assign majors, because majors have no codes to match them against. HoP rows are still rejected for that reason.
 - A row with more or fewer fields than the header is rejected on its own; the rest of the file still imports.
 
 **What it writes.** One `user` row per accepted line, with the password hashed (never returned):
@@ -82,15 +82,17 @@ These read the accounts back so the UI can show what an import created. Both are
 
 | Parameter | Default | Rules |
 | --- | --- | --- |
-| `search` | none | Up to 150 characters; blank means no filter. Matches part of the NIM or lecturer code, Binusian ID, email or name, ignoring case. |
-| `page` | `1` | Integer, 1 or more |
+| `search` | none | Up to 150 characters; blank means no filter. Matches part of the NIM or lecturer code, Binusian ID, email or name, ignoring case. `%` and `_` match themselves, not any character. |
+| `page` | `1` | Integer, 1 or more. The rows skipped, (page − 1) × pageSize, can be at most 4294967295; a page past that gets `400`. |
 | `pageSize` | `50` | Integer, 1 to 200 |
 | `roleFilter` | none | Staff only: `Lecturer`, `Admin`, `SCC` or `HoP` |
 
-**Which accounts.** The same split login uses (`getLocalRoles` in `apps/backend/api/utils/auth/auth.ts`):
+**Which accounts.** Exactly the accounts local login lets in, by the same rules (`getLocalRoles` in `apps/backend/api/utils/auth/auth.ts`; the lists use its SQL version in `apps/backend/api/utils/auth/localAccountSql.ts`):
 
-- Students: `role` is `Student` or `user_type` is `student`.
-- Staff: `role` is Lecturer, Admin, SCC or HoP, and `user_type` is NULL or `staff`. An account with any other `user_type` can't sign in, so neither list shows it.
+- Students: `role` is `Student`, or `user_type` is `student`.
+- Staff: `role` is `Lecturer`, `Admin`, `SCC` or `HoP`, and `user_type` is NULL or `staff`.
+- `user_type` is compared after trimming surrounding spaces, ignoring case, so ` Student ` counts as `student`.
+- `role` must match exactly, including case and spaces. An account whose role is `admin`, `HOP` or `Student ` can't sign in, so neither list shows it. Nor does an account with any other `user_type`.
 
 **Response `200`.** `total` is the number of matching accounts across all pages.
 
@@ -120,7 +122,7 @@ Staff items have `lecturer_code` and `role` instead of `student_id`, plus `hop_m
   "hop_major": [{ "id": 6, "name": "Computer Science" }] }
 ```
 
-**Errors.** `400` with a list of problems (for example `["pageSize is Too big: expected number to be <=200"]`), `401` / `403` as above, `500` `Fetch Failed`.
+**Errors.** `400` with a list of problems (for example `["pageSize is Too big: expected number to be <=200"]` or `["page is too high: (page - 1) × pageSize must be at most 4294967295"]`), `401` / `403` as above, `500` `Fetch Failed`.
 
 **Calling them from the frontend.**
 
@@ -136,7 +138,7 @@ if (response.ok && result.status) {
 }
 ```
 
-`get-user` still serves the Manage Users tables (staff grouped by role, unpaged). The new routes add the student accounts it doesn't cover, and a paged, flat staff list.
+Manage Users and the demo use these paged student and staff routes. `get-user` remains available for clients that need staff grouped by role without pagination.
 
 ## JSON demo integration
 
