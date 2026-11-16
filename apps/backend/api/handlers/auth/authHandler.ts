@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { NextFunction, Request, Response } from "express";
 import { createLocalToken, createToken, getLocalNim, getLocalRoles, parseJwt } from "../../utils/auth/auth.js";
 import { getErrorMessage, sendSuccessResponse, sendErrorResponse, ServiceError } from "../../utils/response/response.js";
-import { isSsoBypassEnabled } from "../../utils/auth/devBypass.js";
 import AuthService from "../../services/auth/authService.js";
+import { isLocalLoginEnabled, isSsoBypassEnabled } from "../../utils/auth/devBypass.js";
 
 type LocalUser = NonNullable<Awaited<ReturnType<typeof AuthService.findLocalUser>>>;
 
@@ -27,21 +27,32 @@ const sessionCookie = (token: { token: string; expires: Date }) => ({
 
 export default class AuthHandler {
     static async loginLocal(req: Request, res: Response, next: NextFunction) {
+        if (!isLocalLoginEnabled()) {
+            return sendErrorResponse(res, "Not found", 404);
+        }
+
         try {
             const schema = z.object({
-                email: z.string().trim().email(),
+                identifier: z.string().trim().min(1, "NIM, email, or lecturer code is required").max(255).optional(),
+                email: z.string().trim().email().optional(),
                 password: z.string().min(1).max(1024),
+            }).refine((data) => Boolean(data.identifier || data.email), {
+                message: "NIM, email, or lecturer code is required",
+                path: ["identifier"],
             });
+
             const valid = schema.safeParse(req.body);
             if (!valid.success) {
                 return sendErrorResponse(res, valid.error.issues[0]?.message ?? "Invalid request body", 400);
             }
 
-            const user = await AuthService.verifyLocalLogin(valid.data.email.toLowerCase(), valid.data.password);
+            const identifier = (valid.data.identifier ?? valid.data.email ?? "").trim();
+            const user = await AuthService.verifyLocalLogin(identifier, valid.data.password);
             if (!user) {
-                return sendErrorResponse(res, "Invalid email or password", 401);
+                return sendErrorResponse(res, "Invalid credentials", 401);
             }
 
+            // === BAGIAN KE BAWAH INI TIDAK PERLU DIUBAH SAMA SEKALI ===
             const roles = getLocalRoles(user);
             if (roles.length === 0) {
                 return sendErrorResponse(res, "Invalid local account role", 403);
