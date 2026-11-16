@@ -86,7 +86,8 @@ All routes below require a current Admin session cookie and return `Cache-Contro
 
 - `POST /api/user/admin/data-tools/imports/preview`: validates a JSON batch and returns per-file counts, validation errors, and up to ten preview rows without passwords. Does not write.
 - `POST /api/user/admin/data-tools/imports/save`: receives the same JSON shape, validates again, maps valid rows to Prisma `User` objects, hashes passwords, and inserts accounts. Files are processed in order so later files see earlier duplicates. Partial imports retain per-file errors.
-- `GET /api/user/admin/data-tools/saved-users?page=1`: queries `prisma.user.findMany` and `count`, returning `{ rows, total, page, pageSize }` inside the standard `{ message, status, data }` response. Passwords and credential versions are never selected. Every click makes a new request; a read failure returns HTTP 503 and the UI removes stale results.
+- `GET /api/user/admin/get-student-accounts` and `GET /api/user/admin/get-staff-accounts`: the Get Data table uses the paginated account routes from PR #69. Responses contain `{ items, total, page, pageSize }` inside `{ message, status, data }`. Both support search and pagination; staff also supports a role filter. The student response includes `major_code`, and staff includes `major_codes` and HoP major names. Passwords and credential versions are never selected.
+- `GET /api/user/admin/data-tools/saved-users?page=1` remains available for compatibility with the original demo API.
 
 Example request (`Content-Type: application/json`):
 
@@ -119,10 +120,11 @@ All cell values are strings. `line` is the logical CSV record number or Excel wo
 | Responsibility | File |
 | --- | --- |
 | Browser file reading and JSON construction | `apps/frontend/src/app/data-demo/readImportFiles.ts` |
-| Preview/save controls and Get Data table | `apps/frontend/src/app/data-demo/ImportWorkspace.tsx` |
+| Preview/save controls | `apps/frontend/src/app/data-demo/ImportWorkspace.tsx` |
+| Get Data table and shared account API client | `apps/frontend/src/app/data-demo/SavedAccounts.tsx`, `apps/frontend/src/lib/accountApi.ts` |
 | Save module: JSON validation, receipt logging, persistence orchestration | `apps/backend/api/utils/demo/saveDemoData.ts` |
 | Existing ORM mapping, hashing, duplicate handling and insert | `apps/backend/api/utils/csv/csvUserImport.ts` |
-| Fetch module: ORM queries with explicit safe fields | `apps/backend/api/utils/demo/fetchDemoData.ts` |
+| Fetch module: ORM queries with explicit safe fields | `apps/backend/api/services/user/userService.ts` (`listStudentAccounts`, `listStaffAccounts`) |
 | HTTP routes | `apps/backend/api/routes/user/admin/dataToolsRoutes.ts` |
 | Nullable major-code columns | `apps/backend/api/prisma/migrations/20261115000000_preserve_imported_major_codes/migration.sql` |
 
@@ -170,3 +172,15 @@ Frontend production compilation and its TypeScript phase passed. The full build 
 Backend tests use `TEST_DATABASE_URL` to opt into database integration checks. Never point test commands at a database containing real data.
 
 Feedback update (2026-11-16): removed the example-derived four-file cap, made step 2 permanently visible, and simplified the sample loader to one file per account type. Targeted backend tests (9), frontend tests (12), both TypeScript checks, and targeted backend lint passed. Six-file batches and the total row limit are covered.
+
+## Account route integration
+
+The data-tools router is mounted at `/admin/data-tools` by the consolidated `userRoutes.ts`, so preview/save, samples, and the database explorer remain reachable after the backend refactor.
+
+The demo Get Data section offers Students and Staff, search, staff-role filtering, and 20-row pages. After a JSON save it clears filters, returns to page one, and fetches the imported type (Students for mixed batches). Switch to Staff and click Get Data to inspect staff from a mixed batch. Requests carry the session cookie, disable caching, and cancel stale requests. Errors clear old results and allow retry.
+
+Manage Users uses the same two account routes. Its Students view is read-only; staff views retain existing update controls. CSV import success selects Students or All staff, clears search, and reloads page one. The existing class-roster Students page remains separate from student login accounts.
+
+Imported major codes are source text, not HoP assignments. Rows imported before the major-code migration may have null major-code fields; duplicate imports do not overwrite them.
+
+Verification for this integration: 211 backend tests passed against the dedicated `gitbee_demo_routes_test` database, including JSON preview/save followed by both account-list routes, preserved major codes, duplicate handling, newest-first ordering, access checks, search, and pagination. All 20 frontend tests and both TypeScript checks passed, as did targeted backend lint. Browser checks covered JSON sample preview/save, automatic account refresh, pagination, staff filters and HoP majors, empty search, reload persistence, and Manage Users search. Frontend lint is still blocked by the installed dependency's missing `zod-validation-error/v4` export.

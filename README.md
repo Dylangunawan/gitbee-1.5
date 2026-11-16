@@ -101,7 +101,7 @@ An authenticated local user can change their own password with `POST /api/auth/c
 
 Generators in `apps/backend/api/prisma/dummy/` produce any number of students and staff, with no network access. Students rotate through the majors CS, GAT, MAT, DS and CYBER. Staff rotate through the roles Lecturer, Admin, SCC and HoP, so together the files cover all five roles. Output is reproducible for a given `--seed`, and every generated user has the password `GitbeeDummy#2026`.
 
-**Sample CSVs.** `apps/backend/samples/students.csv` (25 students) and `staff.csv` (12 staff) are ready to upload to `POST /api/user/admin/upload-student-csv` and `upload-staff-csv`. Each file also has deliberately broken rows mixed in, which the error report should flag:
+**Sample CSVs.** `apps/backend/samples/students.csv` (25 students) and `staff.csv` (12 staff) are ready to upload to `POST /api/user/admin/upload-student-csv` and `upload-staff-csv`; `GET /api/user/admin/get-student-accounts` and `get-staff-accounts` list what was imported (see [User CSV import API](docs/user-csv-import-api.md)). Each file also has deliberately broken rows mixed in, which the error report should flag:
 
 - missing required fields, invalid emails, an over-long name, an unknown role, and a row with several problems at once
 - rows with too few or too many fields
@@ -133,6 +133,16 @@ docker exec gitbee-mysql mysql -uroot -padmin -e "CREATE DATABASE IF NOT EXISTS 
 DATABASE_URL=mysql://root:admin@localhost:3306/gitbee_test pnpm --filter gitbee_backend exec prisma migrate deploy --config ./api/prisma.config.ts
 TEST_DATABASE_URL=mysql://root:admin@localhost:3306/gitbee_test pnpm test
 ```
+
+## Backend layout
+
+Each API resource has one router, one handler and one or more services, named after the resource:
+
+- `api/routes/<resource>/<resource>Routes.ts` lists every path under `/api/<resource>`, including role-specific ones such as `/project/hop/dashboard`, with their middleware. `api/routes/Routes.ts` mounts the routers.
+- `api/handlers/<resource>/<resource>Handler.ts` validates the request with Zod, calls a service and sends the response. Handlers don't query the database.
+- `api/services/<resource>/` holds the Prisma queries and business rules. A service throws `ServiceError(message, status)` for an expected failure, and the handler sends that message and status.
+
+`tests/routeTable.test.ts` lists every route, so adding, removing or renaming one is a reviewed change.
 
 ## Env wiring
 

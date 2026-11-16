@@ -4,6 +4,8 @@ import { api, base } from "./dataApi";
 import { Grid, type Row } from "./DataGrid";
 import type { ImportFile } from "./readImportFiles";
 import styles from "./demo.module.css";
+import SavedAccounts from "./SavedAccounts";
+import type { AccountType } from "@/lib/accountApi";
 
 type Preview = {
   files: {
@@ -26,7 +28,6 @@ type Report = {
     errors: { line: number; errors: string[] }[];
   }[];
 };
-type Saved = { rows: Row[]; total: number; page: number; pageSize: number };
 
 export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
   const [files, setFiles] = useState<File[]>([]);
@@ -35,9 +36,8 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
   const [report, setReport] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState<Saved | null>(null);
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState("");
+  const [revision, setRevision] = useState(0);
+  const [savedType, setSavedType] = useState<AccountType>("student");
   const input = useRef<HTMLInputElement>(null);
   const message = (cause: unknown) =>
     cause instanceof Error ? cause.message : "Request failed. Please retry.";
@@ -115,24 +115,15 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
         }),
       );
       setPayload(null);
-      setSaved(null);
+      setSavedType(
+        payload.some((file) => file.type === "student") ? "student" : "staff",
+      );
+      setRevision((value) => value + 1);
       onSaved();
     } catch (cause) {
       setError(message(cause));
     } finally {
       setBusy(false);
-    }
-  }
-  async function getData(page = 1) {
-    setFetching(true);
-    setFetchError("");
-    try {
-      setSaved(await api<Saved>("/saved-users?page=" + page));
-    } catch (cause) {
-      setSaved(null);
-      setFetchError(message(cause));
-    } finally {
-      setFetching(false);
     }
   }
 
@@ -238,8 +229,7 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
             disabled={
               !payload ||
               !preview?.files.some((file) => file.validCount > 0) ||
-              busy ||
-              fetching
+              busy
             }
             onClick={save}
           >
@@ -309,62 +299,12 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
         </section>
       )}
 
-      <section className={styles.card} aria-label="Saved accounts">
-        <div className={styles.sectionHeading}>
-          <span className={styles.step}>3</span>
-          <div>
-            <h2>Get saved data</h2>
-            <p>
-              Read accounts from the database, including after refreshing this
-              page.
-            </p>
-          </div>
-        </div>
-        <button
-          className={styles.primary}
-          disabled={fetching || busy}
-          onClick={() => getData()}
-        >
-          {fetching ? "Fetching…" : "Get Data"}
-        </button>
-        {fetchError && (
-          <p className={styles.error} role="alert">
-            {fetchError}
-          </p>
-        )}
-        {!saved && !fetchError && (
-          <p className={styles.muted}>
-            Click Get Data to display saved accounts here.
-          </p>
-        )}
-        {saved && (
-          <div aria-live="polite" aria-busy={fetching}>
-            <p>
-              {saved.total} saved accounts · Page {saved.page} of{" "}
-              {Math.max(1, Math.ceil(saved.total / saved.pageSize))}
-            </p>
-            <Grid rows={saved.rows} />
-            <div className={styles.actions}>
-              <button
-                className={styles.secondary}
-                disabled={fetching || busy || saved.page <= 1}
-                onClick={() => getData(saved.page - 1)}
-              >
-                Previous saved page
-              </button>
-              <button
-                className={styles.secondary}
-                disabled={
-                  fetching || busy || saved.page * saved.pageSize >= saved.total
-                }
-                onClick={() => getData(saved.page + 1)}
-              >
-                Next saved page
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
+      <SavedAccounts
+        key={revision}
+        autoLoad={revision > 0}
+        initialType={savedType}
+        busy={busy}
+      />
     </div>
   );
 }
