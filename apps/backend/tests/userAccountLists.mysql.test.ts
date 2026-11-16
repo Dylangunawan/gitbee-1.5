@@ -14,7 +14,7 @@ process.env.JWT_SECRET = "user-account-lists-mysql-secret";
 process.env.COOKIE_NAME = "account_lists_mysql";
 const { prisma } = await import("../api/prisma/client.js");
 const { default: userRoutes } = await import("../api/routes/user/userRoutes.js");
-const { createLocalToken } = await import("../api/utils/auth/auth.js");
+const { createLocalToken, getLocalRoles } = await import("../api/utils/auth/auth.js");
 
 const app = express();
 app.use(express.json(), cookieParser());
@@ -127,5 +127,53 @@ describe("account lists against MySQL", { skip: databaseUrl ? false : "set TEST_
 
     assert.equal(firstPage.total, 5);
     assert.deepEqual(firstPage.items.map((item) => item.student_id).sort(), [`N1-${suffix}`, `N2-${suffix}`]);
+  });
+
+  it("follows login's rules, not the column collation, for oddly stored roles and types", async () => {
+    const marker = `odd-${suffix}`;
+    // [role, user_type, what login makes of it]
+    const accounts: [string, string | null, "student" | "staff" | "neither"][] = [
+      ["Lecturer", " student ", "student"],
+      ["Lecturer", "\tStudent\n", "student"],
+      ["Lecturer", " staff ", "staff"],
+      ["SCC", " STAFF ", "staff"],
+      ["admin", null, "neither"],
+      ["HOP", "staff", "neither"],
+      ["Student ", null, "neither"],
+      ["Lecturer", "stüdent", "neither"],
+    ];
+    for (const [role, user_type, expected] of accounts) {
+      const roles = getLocalRoles({ role, user_type });
+      assert.equal(roles.includes("Student") ? "student" : roles.length > 0 ? "staff" : "neither", expected,
+        `login's rule for ${JSON.stringify(role)} / ${JSON.stringify(user_type)}`);
+    }
+    await prisma.user.createMany({ data: accounts.map(([role, user_type], index) => ({
+      email: `${marker}-${index}@${domain}`, name: `Odd ${index}`, role, user_type,
+      student_id: `ODS${index}-${suffix}`, lecturer_code: `ODL${index}-${suffix}`,
+    })) });
+
+    const students = await list<StudentItem>("get-student-accounts", { search: marker });
+    const staff = await list<StaffItem>("get-staff-accounts", { search: marker });
+
+    const shown = (index: number) => {
+      const email = `${marker}-${index}@${domain}`;
+      const isStudent = students.items.some((item) => item.email === email);
+      const isStaff = staff.items.some((item) => item.email === email);
+      return isStudent && isStaff ? "both" : isStudent ? "student" : isStaff ? "staff" : "neither";
+    };
+    assert.deepEqual(accounts.map((_, index) => shown(index)), accounts.map(([, , expected]) => expected));
+    assert.deepEqual([students.total, staff.total], [2, 2]);
+  });
+
+  it("searches for % and _ as typed, not as wildcards", async () => {
+    const marker = `literal-${suffix}`;
+    await prisma.user.createMany({ data: [
+      { email: `${marker}-1@${domain}`, name: `Discount 50%_off ${suffix}`, role: "Student", student_id: `LT1-${suffix}` },
+      { email: `${marker}-2@${domain}`, name: `Discount 50xxoff ${suffix}`, role: "Student", student_id: `LT2-${suffix}` },
+    ] });
+
+    const body = await list<StudentItem>("get-student-accounts", { search: `50%_off ${suffix}` });
+
+    assert.deepEqual(body.items.map((item) => item.email), [`${marker}-1@${domain}`]);
   });
 });

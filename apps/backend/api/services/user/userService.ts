@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { prisma } from "../../prisma/client.js";
 import { Prisma } from "../../prisma/generated/prisma/client.js";
+import { isStaffAccount, isStudentAccount, roleIs } from "../../utils/auth/localAccountSql.js";
 import { hashPassword } from "../../utils/auth/password.js";
-import { staffRoles } from "../../utils/csv/csvParser.js";
+import type { staffRoles } from "../../utils/csv/csvParser.js";
 import { readFirstSheetRows } from "../../utils/excel/excelSheet.js";
 import { ServiceError } from "../../utils/response/response.js";
 
@@ -18,35 +19,51 @@ const userListSelect = {
     created_at: true,
 } as const;
 
-// Same split as getLocalRoles in utils/auth/auth.ts, so each list shows the
-// accounts that sign in as that kind of user. The column collation makes these
-// comparisons ignore case.
-const studentAccountWhere = {
-    OR: [{ role: "Student" }, { user_type: "student" }],
-} satisfies Prisma.UserWhereInput;
-
-const staffAccountWhere = {
-    role: { in: [...staffRoles] },
-    OR: [{ user_type: null }, { user_type: "staff" }],
-} satisfies Prisma.UserWhereInput;
-
 export interface AccountListParams {
     search?: string | undefined;
     page: number;
     pageSize: number;
 }
 
-const searchAccounts = (search: string | undefined, columns: ("student_id" | "lecturer_code")[]) =>
-    search
-        ? {
-            OR: [
-                ...columns.map((column) => ({ [column]: { contains: search } })),
-                { binusian_id: { contains: search } },
-                { email: { contains: search } },
-                { name: { contains: search } },
-            ],
-        }
-        : {};
+/**
+ * Matches part of the given ID column, the Binusian ID, the email or the name.
+ * "!" escapes the term's own "%" and "_", so they are searched for as typed
+ * instead of acting as LIKE wildcards.
+ */
+const matchesSearch = (search: string | undefined, idColumn: Prisma.Sql) => {
+    if (!search) {
+        return Prisma.sql`TRUE`;
+    }
+    const term = `%${search.replace(/[!%_]/g, "!$&")}%`;
+    return Prisma.sql`(${idColumn} LIKE ${term} ESCAPE '!' OR binusian_id LIKE ${term} ESCAPE '!' OR email LIKE ${term} ESCAPE '!' OR name LIKE ${term} ESCAPE '!')`;
+};
+
+/**
+ * The ids on one page of the user rows matching `condition`, newest first, and
+ * how many rows match in all. Which accounts count as students or staff is
+ * decided in SQL (utils/auth/localAccountSql.ts), which Prisma's own filters
+ * cannot express, so the matching, counting and paging happen here and the
+ * caller loads the rows by id.
+ */
+async function pageOfUserIds(condition: Prisma.Sql, params: AccountListParams) {
+    // BigInt, because MySQL rejects a LIMIT or OFFSET parameter sent as a JS
+    // number once it no longer fits in 32 bits.
+    const take = BigInt(params.pageSize);
+    const skip = BigInt(params.page - 1) * take;
+    const [counted, page] = await prisma.$transaction([
+        prisma.$queryRaw<{ total: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS total FROM user WHERE ${condition}`),
+        prisma.$queryRaw<{ id: number }[]>(
+            Prisma.sql`SELECT id FROM user WHERE ${condition} ORDER BY created_at DESC, id DESC LIMIT ${take} OFFSET ${skip}`
+        ),
+    ]);
+    return { ids: page.map((row) => row.id), total: Number(counted[0]?.total ?? 0) };
+}
+
+/** Rows loaded by id come back in no particular order; this puts them back in page order. */
+const inPageOrder = <T extends { id: number }>(rows: T[], ids: number[]) => {
+    const position = new Map(ids.map((id, index) => [id, index]));
+    return [...rows].sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+};
 
 export interface CreateUserInput {
     lecturer_code: string;
@@ -102,13 +119,19 @@ export default class UserService {
         return { scc, hop, lecturer, admin };
     }
 
-    /** Student accounts (what the student CSV import creates), newest first, one page at a time. */
+    /**
+     * Student accounts (what the student CSV import creates), newest first, one
+     * page at a time: exactly the accounts login signs in as students.
+     */
     static async listStudentAccounts(params: AccountListParams) {
-        const where = { AND: [studentAccountWhere, searchAccounts(params.search, ["student_id"])] };
-        const [total, items] = await prisma.$transaction([
-            prisma.user.count({ where }),
-            prisma.user.findMany({
-                where,
+        const { ids, total } = await pageOfUserIds(
+            Prisma.sql`${isStudentAccount} AND ${matchesSearch(params.search, Prisma.sql`student_id`)}`,
+            params
+        );
+        const rows = ids.length === 0
+            ? []
+            : await prisma.user.findMany({
+                where: { id: { in: ids } },
                 select: {
                     id: true,
                     student_id: true,
@@ -117,27 +140,24 @@ export default class UserService {
                     binusian_id: true,
                     created_at: true,
                 },
-                orderBy: [{ created_at: "desc" }, { id: "desc" }],
-                skip: (params.page - 1) * params.pageSize,
-                take: params.pageSize,
-            }),
-        ]);
-        return { items, total, page: params.page, pageSize: params.pageSize };
+            });
+        return { items: inPageOrder(rows, ids), total, page: params.page, pageSize: params.pageSize };
     }
 
-    /** Staff accounts (what the staff CSV import and insert-user create), newest first; `roleFilter` narrows to one role. */
+    /**
+     * Staff accounts (what the staff CSV import and insert-user create), newest
+     * first: exactly the accounts login signs in as staff. `roleFilter` narrows
+     * the list to one role.
+     */
     static async listStaffAccounts(params: AccountListParams & { roleFilter?: (typeof staffRoles)[number] | undefined }) {
-        const where = {
-            AND: [
-                staffAccountWhere,
-                ...(params.roleFilter ? [{ role: params.roleFilter }] : []),
-                searchAccounts(params.search, ["lecturer_code"]),
-            ],
-        };
-        const [total, rows] = await prisma.$transaction([
-            prisma.user.count({ where }),
-            prisma.user.findMany({
-                where,
+        const { ids, total } = await pageOfUserIds(
+            Prisma.sql`${isStaffAccount} AND ${params.roleFilter ? roleIs(params.roleFilter) : Prisma.sql`TRUE`} AND ${matchesSearch(params.search, Prisma.sql`lecturer_code`)}`,
+            params
+        );
+        const rows = ids.length === 0
+            ? []
+            : await prisma.user.findMany({
+                where: { id: { in: ids } },
                 select: {
                     id: true,
                     lecturer_code: true,
@@ -148,12 +168,8 @@ export default class UserService {
                     created_at: true,
                     hopMajors: { select: { major: { select: { id: true, name: true } } } },
                 },
-                orderBy: [{ created_at: "desc" }, { id: "desc" }],
-                skip: (params.page - 1) * params.pageSize,
-                take: params.pageSize,
-            }),
-        ]);
-        const items = rows.map(({ hopMajors, ...user }) => ({
+            });
+        const items = inPageOrder(rows, ids).map(({ hopMajors, ...user }) => ({
             ...user,
             hop_major: hopMajors.map((hm) => ({ id: hm.major.id, name: hm.major.name })),
         }));

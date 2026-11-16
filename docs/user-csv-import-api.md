@@ -82,15 +82,17 @@ These read the accounts back so the UI can show what an import created. Both are
 
 | Parameter | Default | Rules |
 | --- | --- | --- |
-| `search` | none | Up to 150 characters; blank means no filter. Matches part of the NIM or lecturer code, Binusian ID, email or name, ignoring case. |
+| `search` | none | Up to 150 characters; blank means no filter. Matches part of the NIM or lecturer code, Binusian ID, email or name, ignoring case. `%` and `_` match themselves, not any character. |
 | `page` | `1` | Integer, 1 or more |
 | `pageSize` | `50` | Integer, 1 to 200 |
 | `roleFilter` | none | Staff only: `Lecturer`, `Admin`, `SCC` or `HoP` |
 
-**Which accounts.** The same split login uses (`getLocalRoles` in `apps/backend/api/utils/auth/auth.ts`):
+**Which accounts.** Exactly the accounts local login lets in, by the same rules (`getLocalRoles` in `apps/backend/api/utils/auth/auth.ts`; the lists use its SQL version in `apps/backend/api/utils/auth/localAccountSql.ts`):
 
-- Students: `role` is `Student` or `user_type` is `student`.
-- Staff: `role` is Lecturer, Admin, SCC or HoP, and `user_type` is NULL or `staff`. An account with any other `user_type` can't sign in, so neither list shows it.
+- Students: `role` is `Student`, or `user_type` is `student`.
+- Staff: `role` is `Lecturer`, `Admin`, `SCC` or `HoP`, and `user_type` is NULL or `staff`.
+- `user_type` is compared after trimming surrounding spaces, ignoring case, so ` Student ` counts as `student`.
+- `role` must match exactly, including case and spaces. An account whose role is `admin`, `HOP` or `Student ` can't sign in, so neither list shows it. Nor does an account with any other `user_type`.
 
 **Response `200`.** `total` is the number of matching accounts across all pages.
 
