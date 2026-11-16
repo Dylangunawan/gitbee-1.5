@@ -19,6 +19,9 @@ userRoutes.patch("/admin/update-role", currentAdminMiddleware, UserHandler.updat
 // User imports
 userRoutes.post("/admin/upload-student-csv", AuthMiddleware(), RoleMiddleware("Admin"), uploadCsv, UserHandler.importStudentsCsv);
 userRoutes.post("/admin/upload-staff-csv", AuthMiddleware(), RoleMiddleware("Admin"), uploadCsv, UserHandler.importStaffCsv);
+// Read back the accounts the CSV imports create (paged; ?search=&page=&pageSize=)
+userRoutes.get("/admin/get-student-accounts", currentAdminMiddleware, UserHandler.listStudentAccounts);
+userRoutes.get("/admin/get-staff-accounts", currentAdminMiddleware, UserHandler.listStaffAccounts);
 userRoutes.post("/admin/upload-user-excel", uploadExcel, UserHandler.importLecturersExcel);
 userRoutes.patch("/admin/remove-user-excel", UserHandler.deleteAllLecturers);
 

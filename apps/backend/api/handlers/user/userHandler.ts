@@ -8,12 +8,34 @@ import {
     sendSuccessResponse,
     ServiceError,
 } from "../../utils/response/response.js";
-import { parseAndValidateCsvBuffer, type CsvUploadType } from "../../utils/csv/csvParser.js";
+import { parseAndValidateCsvBuffer, staffRoles, type CsvUploadType } from "../../utils/csv/csvParser.js";
 import { importCsvUsers } from "../../utils/csv/csvUserImport.js";
 import UserService from "../../services/user/userService.js";
 import ClassRosterService from "../../services/class/classRosterService.js";
 
 const searchQuery = z.object({ search: z.string().optional() });
+
+// The furthest a list can be paged: (page - 1) × pageSize, the rows skipped,
+// is at most 2^32 - 1. Prisma's query compiler wraps a larger skip round to the
+// first rows, so a page past this gets a 400 whatever the query looks like.
+export const MAX_ACCOUNT_LIST_OFFSET = 4_294_967_295;
+
+// Query for the paged account lists. A blank search means no filter.
+const accountListShape = {
+    search: z.string().trim().max(150).optional().transform((value) => value || undefined),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(200).default(50),
+};
+const offsetWithinLimit = (query: { page: number; pageSize: number }) =>
+    (query.page - 1) * query.pageSize <= MAX_ACCOUNT_LIST_OFFSET;
+const offsetLimitError = {
+    error: `too high: (page - 1) × pageSize must be at most ${MAX_ACCOUNT_LIST_OFFSET}`,
+    path: ["page"],
+};
+const accountListQuery = z.object(accountListShape).refine(offsetWithinLimit, offsetLimitError);
+const staffAccountListQuery = z
+    .object({ ...accountListShape, roleFilter: z.enum(staffRoles).optional() })
+    .refine(offsetWithinLimit, offsetLimitError);
 
 /** Admin endpoints under /user/admin: staff accounts, user imports, and the class lists imported from Excel. */
 export default class UserHandler {
@@ -32,6 +54,30 @@ export default class UserHandler {
             sendSuccessResponse(res, await UserService.listUsersByRole(validationResult.data));
         } catch (error) {
             sendServiceError(res, error, "Fetch Failed");
+        }
+    }
+
+    static async listStudentAccounts(req: Request, res: Response) {
+        const validationResult = validateSchema(accountListQuery, req.query);
+        if (validationResult.error) {
+            return sendErrorResponse(res, validationResult.details);
+        }
+        try {
+            sendSuccessResponse(res, await UserService.listStudentAccounts(validationResult.data));
+        } catch {
+            sendErrorResponse(res, "Fetch Failed", 500);
+        }
+    }
+
+    static async listStaffAccounts(req: Request, res: Response) {
+        const validationResult = validateSchema(staffAccountListQuery, req.query);
+        if (validationResult.error) {
+            return sendErrorResponse(res, validationResult.details);
+        }
+        try {
+            sendSuccessResponse(res, await UserService.listStaffAccounts(validationResult.data));
+        } catch {
+            sendErrorResponse(res, "Fetch Failed", 500);
         }
     }
 

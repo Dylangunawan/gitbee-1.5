@@ -43,6 +43,9 @@ export const createToken = (
     }
 }
 
+// utils/auth/localAccountSql.ts repeats these rules in SQL for the admin
+// account lists, and tests/localAccountSql.mysql.test.ts checks that the two
+// agree. Change them together.
 export const getLocalRoles = (user: {
     role: string;
     user_type: string | null;
