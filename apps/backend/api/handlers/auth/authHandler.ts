@@ -32,8 +32,20 @@ export default class AuthHandler {
         }
 
         try {
+            const isAsciiIdentifierOrEmail = (value: string) =>
+                /^[A-Za-z0-9]+$/.test(value) || z.string().email().safeParse(value).success;
+
             const schema = z.object({
-                identifier: z.string().trim().min(1, "NIM, email, or lecturer code is required").max(255).optional(),
+                identifier: z
+                    .string()
+                    .trim()
+                    .min(1, "NIM, email, or lecturer code is required")
+                    .max(255)
+                    .refine(
+                        isAsciiIdentifierOrEmail,
+                        "Identifier must be an ASCII NIM, lecturer code, or valid email address"
+                    )
+                    .optional(),
                 email: z.string().trim().email().optional(),
                 password: z.string().min(1).max(1024),
             }).refine((data) => Boolean(data.identifier || data.email), {
@@ -52,7 +64,6 @@ export default class AuthHandler {
                 return sendErrorResponse(res, "Invalid credentials", 401);
             }
 
-            // === BAGIAN KE BAWAH INI TIDAK PERLU DIUBAH SAMA SEKALI ===
             const roles = getLocalRoles(user);
             if (roles.length === 0) {
                 return sendErrorResponse(res, "Invalid local account role", 403);
