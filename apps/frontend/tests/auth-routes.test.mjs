@@ -9,6 +9,7 @@ import nextTesting from "next/experimental/testing/server.js";
 const { unstable_doesMiddlewareMatch } = nextTesting;
 
 process.env.NEXT_PUBLIC_COOKIE_NAME = "frontend_role_test";
+process.env.NEXT_PUBLIC_DEMO = "true";
 
 // Execute the actual proxy without starting Next or requiring an SSO account.
 const moduleUrl = (source) => `data:text/javascript;base64,${Buffer.from(
@@ -27,7 +28,7 @@ const pathsByRole = {
   Lecturer: ["/dashboard-lecturer", "/course-lecturer", "/history-lecturer"],
   SCC: ["/dashboard-scc"],
   HoP: ["/dashboard-hop"],
-  Admin: ["/dashboard-admin", "/detail-admin-project/1", "/manage-categories", "/manage-student", "/manage-transactions", "/manage-users"],
+  Admin: ["/dashboard-admin", "/detail-admin-project/1", "/manage-categories", "/manage-student", "/manage-transactions", "/manage-users", "/data-demo"],
 };
 const memberships = {
   Student: ["Student"], Lecturer: ["Lecturer"],
@@ -41,12 +42,26 @@ const check = (path, token) => proxy(new NextRequest(`http://localhost:8000${pat
   headers: token ? { cookie: `${SESSION_COOKIE_NAME}=${token}` } : {},
 }));
 
-test("Next applies the guard to every protected page and leaves public pages available", () => {
+test("Next guards protected and demo pages and leaves other public pages available", () => {
   for (const path of Object.values(pathsByRole).flat()) {
     assert.equal(unstable_doesMiddlewareMatch({ config, nextConfig: {}, url: path }), true, path);
   }
+  assert.equal(unstable_doesMiddlewareMatch({ config, nextConfig: {}, url: "/demo-login" }), true);
+  assert.equal(check("/demo-login").headers.get("x-middleware-next"), "1");
   for (const path of ["/", "/explore", "/login/microsoft", "/favicon.ico"]) {
     assert.equal(unstable_doesMiddlewareMatch({ config, nextConfig: {}, url: path }), false, path);
+  }
+});
+
+test("disabled demo pages are unavailable even to authenticated admins", () => {
+  try {
+    delete process.env.NEXT_PUBLIC_DEMO;
+    assert.equal(check("/data-demo", tokenFor("Admin")).status, 404);
+    assert.equal(check("/data-demo").status, 404);
+    assert.equal(check("/demo-login").status, 404);
+    assert.equal(check("/manage-users", tokenFor("Admin")).headers.get("x-middleware-next"), "1");
+  } finally {
+    process.env.NEXT_PUBLIC_DEMO = "true";
   }
 });
 

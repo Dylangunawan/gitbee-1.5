@@ -24,6 +24,9 @@ model User {
   binusian_id   String?  @unique @db.VarChar(150)
   student_id    String?  @unique @db.VarChar(50)
   lecturer_code String?  @unique @db.VarChar(50)
+  // Imported source codes; these do not establish Major relationships.
+  major_code    String?  @db.VarChar(50)
+  major_codes   String?  @db.VarChar(255)
   created_at    DateTime @default(now())
   hopMajors     HoPMajor[]
 

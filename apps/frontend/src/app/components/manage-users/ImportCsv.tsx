@@ -9,7 +9,7 @@ import { LuDownload } from "react-icons/lu";
 
 interface ImportCsvProps {
   setOpenImportCsv: (value: boolean) => void;
-  fetchData: () => void;
+  fetchData: (type: UserCsvType) => void;
 }
 
 const csvTypes: Record<
@@ -25,8 +25,7 @@ const csvTypes: Record<
   student: {
     label: "Students",
     template: "/csv/students-template.csv",
-    columns:
-      "nim, name, email, binusian_id (optional), major_code, password",
+    columns: "nim, name, email, binusian_id (optional), major_code, password",
   },
 };
 
@@ -61,7 +60,7 @@ function ImportCsv(props: ImportCsvProps) {
     setUploading(false);
     if (result.success) {
       setReport(result.data);
-      props.fetchData();
+      props.fetchData(type);
     } else {
       setError(result.message);
     }
@@ -93,6 +92,7 @@ function ImportCsv(props: ImportCsvProps) {
             <button
               key={option}
               type="button"
+              disabled={uploading}
               role="radio"
               aria-checked={type === option}
               onClick={() => {
@@ -124,6 +124,7 @@ function ImportCsv(props: ImportCsvProps) {
           <input
             className="block w-full text-sm text-gray-900 border border-gray-300 cursor-pointer bg-gray-50"
             id="csv_file_input"
+            disabled={uploading}
             type="file"
             accept=".csv,text/csv"
             onChange={(event) => {

@@ -2,11 +2,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { motion, useScroll } from "framer-motion";
 import { CiSearch } from "react-icons/ci";
-import { deleteAllUser, getAllUsers } from "./actions";
+import { deleteAllUser } from "./actions";
 import {
   Table,
   TableBody,
-  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
@@ -16,42 +15,83 @@ import Link from "next/link";
 import ImportExcel from "@/app/components/manage-users/ImportExcel";
 import ImportCsv from "@/app/components/manage-users/ImportCsv";
 import PopUpUsers from "@/app/components/manage-users/PopUpUsers";
+import { getAccounts, type Account, type StaffRole } from "@/lib/accountApi";
 import Loading from "@/app/components/Loading";
 import PopUpConfirmation from "@/app/components/manage-users/PopUpConfirmation";
 
 const Page = () => {
-  const listRoleUser = ["admin", "hop", "scc", "lecturer"];
+  const staffRoles: StaffRole[] = ["Admin", "HoP", "SCC", "Lecturer"];
   const [selectedRole, setSelectedRole] = useState(0);
   const { scrollYProgress } = useScroll();
   const prevScrollYRef = useRef(0);
   const [expand, setExpand] = useState(true);
   const [search, setSearch] = useState("");
-  const [users, setUsers] = useState<any>([]);
+  const [users, setUsers] = useState<Account[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
+  const requestRef = useRef<AbortController | null>(null);
+  const pageSize = 20;
   const [openImportExcel, setOpenImportExcel] = useState(false);
   const [openImportCsv, setOpenImportCsv] = useState(false);
   const [openPopUpUsers, setOpenPopUpUsers] = useState(false);
-  const [selectedUserToUpdate, setSelectedUserToUpdate] = useState<any>();
+  const [selectedUserToUpdate, setSelectedUserToUpdate] = useState<Account>();
   const [openPopUpConfirmation, setOpenPopUpConfirmation] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     setLoading(true);
-    const resultUsers = await getAllUsers(search);
-    setUsers(resultUsers?.data);
-    setLoading(false);
-  }, [search]);
+    setError("");
+    setUsers([]);
+    try {
+      const roleFilter = (["Admin", "HoP", "SCC", "Lecturer"] as const)[
+        selectedRole
+      ];
+      const result = await getAccounts(
+        selectedRole === 4 ? "student" : "staff",
+        {
+          search,
+          page,
+          pageSize,
+          signal: controller.signal,
+          ...(roleFilter ? { roleFilter } : {}),
+        },
+      );
+      if (!controller.signal.aborted) {
+        setUsers(result.items);
+        setTotal(result.total);
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setTotal(0);
+        setError(
+          cause instanceof Error ? cause.message : "Could not fetch accounts.",
+        );
+      }
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }, [search, page, selectedRole]);
+
+  const refreshAccounts = () => {
+    setSearch("");
+    setPage(1);
+    setRevision((value) => value + 1);
+  };
 
   const handleDeleteAllLecturer = async () => {
     setLoading(true);
     await deleteAllUser();
     setOpenPopUpConfirmation(false);
-    fetchData();
-    setLoading(false);
+    refreshAccounts();
   };
 
   useEffect(() => {
-    const handleScroll = (currentScrollY: number) => { 
-
+    const handleScroll = (currentScrollY: number) => {
       if (currentScrollY < 0.1) setExpand(true);
       else if (currentScrollY > prevScrollYRef.current) setExpand(false);
       else if (currentScrollY < prevScrollYRef.current) setExpand(true);
@@ -71,26 +111,33 @@ const Page = () => {
         scrollYProgress.onChange(handleScroll);
       }
     };
- 
+
     scrollListener();
- 
+
     const resizeListener = () => {
       scrollListener();
     };
     window.addEventListener("resize", resizeListener);
 
     return () => {
-      window.removeEventListener("resize", resizeListener); 
+      window.removeEventListener("resize", resizeListener);
       scrollYProgress.clearListeners();
     };
   }, [scrollYProgress]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void fetchData();
+    return () => requestRef.current?.abort();
+  }, [fetchData, revision]);
 
   return (
     <motion.div className="relative min-h-screen flex flex-col pt-20 sm:pt-28 2xl:px-16 pb-10 bg-gray-50">
+      <Link
+        href="/data-demo"
+        className="mx-5 sm:mx-9 mb-5 text-sm text-primary-binus underline w-fit"
+      >
+        Import CSV / Excel & browse database →
+      </Link>
       <div
         className={`sticky ${
           expand ? "top-20 sm:top-28" : "top-7"
@@ -105,53 +152,31 @@ const Page = () => {
             type="text"
             placeholder="Search"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            maxLength={150}
+            aria-label="Search accounts"
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             className={`border ${
               expand ? "w-full" : "w-[35.5rem]"
             } h-full p-2 sm:p-3 px-12 sm:px-12 rounded-md text-sm sm:text-base`}
           />
         </div>
-        <div className="relative min-w-fit w-full sm:w-auto flex justify-end items-center h-full bg-white border rounded-md py-2 px-2 gap-2">
-          <button
-            className={`w-full whitespace-nowrap cursor-pointer text-xs sm:text-base py-1 px-2 md:py-2 md:px-4 relative ${
-              selectedRole == 0
-                ? "bg-primary-binus text-white"
-                : "bg-transparent text-primary-binus hover:bg-gray-50"
-            } rounded-sm`}
-            onClick={() => setSelectedRole(0)}
-          >
-            Admin
-          </button>
-          <button
-            className={`w-full whitespace-nowrap cursor-pointer text-xs sm:text-base py-1 px-2 md:py-2 md:px-4 relative ${
-              selectedRole == 1
-                ? "bg-primary-binus text-white"
-                : "bg-transparent text-primary-binus hover:bg-gray-50"
-            } rounded-sm`}
-            onClick={() => setSelectedRole(1)}
-          >
-            HoP
-          </button>
-          <button
-            className={`w-full whitespace-nowrap cursor-pointer text-xs sm:text-base py-1 px-2 md:py-2 md:px-4 relative ${
-              selectedRole == 2
-                ? "bg-primary-binus text-white"
-                : "bg-transparent text-primary-binus hover:bg-gray-50"
-            } rounded-sm`}
-            onClick={() => setSelectedRole(2)}
-          >
-            SCC
-          </button>
-          <button
-            className={`w-full whitespace-nowrap cursor-pointer text-xs sm:text-base py-1 px-2 md:py-2 md:px-4 relative ${
-              selectedRole == 3
-                ? "bg-primary-binus text-white"
-                : "bg-transparent text-primary-binus hover:bg-gray-50"
-            } rounded-sm`}
-            onClick={() => setSelectedRole(3)}
-          >
-            Lecturer
-          </button>
+        <div className="relative min-w-0 w-full sm:w-auto flex flex-wrap justify-start items-center h-full bg-white border rounded-md py-2 px-2 gap-2">
+          {[...staffRoles, "Students", "All staff"].map((label, index) => (
+            <button
+              key={label}
+              aria-pressed={selectedRole === index}
+              className={`whitespace-nowrap text-xs sm:text-base py-1 px-2 rounded-sm ${selectedRole === index ? "bg-primary-binus text-white" : "text-primary-binus hover:bg-gray-50"}`}
+              onClick={() => {
+                setSelectedRole(index);
+                setPage(1);
+              }}
+            >
+              {label}
+            </button>
+          ))}
         </div>
         <div className="relative min-w-fit flex justify-end items-center h-full bg-white border rounded-md py-2 px-2 gap-2">
           <button
@@ -179,71 +204,118 @@ const Page = () => {
           </span>
         </div>
       )}
+      {error && (
+        <p role="alert" className="mx-5 sm:mx-9 mb-3 text-red-600">
+          {error}{" "}
+          <button className="underline" onClick={fetchData}>
+            Retry
+          </button>
+        </p>
+      )}
       <div className="w-auto bg-white shadow-md rounded-md mx-5 sm:mx-9 ">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead className="text-start">No.</TableHead>
-              <TableHead className="text-center">User Code</TableHead>
+              <TableHead className="text-center">
+                {selectedRole === 4 ? "Student ID" : "User Code"}
+              </TableHead>
+              <TableHead className="text-center">Name</TableHead>
+              <TableHead className="text-center">Binusian ID</TableHead>
               <TableHead className="text-center">Email</TableHead>
               <TableHead className="text-center">Role</TableHead>
               {selectedRole == 1 && (
                 <TableHead className="text-center">Major</TableHead>
               )}
-              <TableHead className="text-center">Action</TableHead>
+              {selectedRole !== 4 && (
+                <TableHead className="text-center">Action</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {users?.[listRoleUser[selectedRole] ?? ""]?.map(
-              (user: any, index: number) => (
-                <TableRow key={user?.email}>
-                  <TableCell className="text-start font-medium">
-                    {index + 1}.
-                  </TableCell>
+            {users.map((user, index) => (
+              <TableRow key={user?.email}>
+                <TableCell className="text-start font-medium">
+                  {(page - 1) * pageSize + index + 1}.
+                </TableCell>
+                <TableCell className="text-center">
+                  {selectedRole === 4 ? user.student_id : user.lecturer_code}
+                </TableCell>
+                <TableCell className="text-center">{user.name}</TableCell>
+                <TableCell className="text-center">
+                  {user.binusian_id}
+                </TableCell>
+                <TableCell className="text-center">{user?.email}</TableCell>
+                <TableCell className="text-center">
+                  {selectedRole === 4 ? "Student" : user.role}
+                </TableCell>
+                {selectedRole == 1 && (
                   <TableCell className="text-center">
-                    {user?.lecturer_code}
+                    {user?.hop_major?.map((major, index) => (
+                      <span key={major?.id ?? major?.name}>
+                        {major?.name}
+                        {index + 1 < (user.hop_major?.length ?? 0) && ", "}
+                      </span>
+                    ))}
                   </TableCell>
-                  <TableCell className="text-center">{user?.email}</TableCell>
-                  <TableCell className="text-center">{user?.role}</TableCell>
-                  {selectedRole == 1 && (
-                    <TableCell className="text-center">
-                      {user?.hop_major?.map((major: any, index: number) => (
-                        <span key={major?.id ?? major?.name}>
-                          {major?.name}
-                          {index + 1 < user?.hop_major?.length && ", "}
-                        </span>
-                      ))}
-                    </TableCell>
-                  )}
+                )}
+                {selectedRole !== 4 && (
                   <TableCell className="text-center">
                     <button
                       className="bg-primary-binus px-2 py-1 text-white rounded-md"
                       onClick={() => {
-                        setOpenPopUpUsers(true), setSelectedUserToUpdate(user);
+                        (setOpenPopUpUsers(true),
+                          setSelectedUserToUpdate(user));
                       }}
                     >
                       Update
                     </button>
                   </TableCell>
-                </TableRow>
-              )
-            )}
+                )}
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
-        {users?.[listRoleUser[selectedRole] ?? ""]?.length < 1 && (
+        {!loading && !error && users.length === 0 && (
           <div className="w-full text-center py-5 text-gray-500">
             No Data . . .
           </div>
         )}
       </div>
+      <div className="mx-5 sm:mx-9 flex justify-between items-center gap-4 py-4">
+        <button
+          className="disabled:opacity-40"
+          disabled={loading || page <= 1}
+          onClick={() => setPage((value) => value - 1)}
+        >
+          Previous accounts page
+        </button>
+        <span>
+          {total} accounts · Page {page} of{" "}
+          {Math.max(1, Math.ceil(total / pageSize))}
+        </span>
+        <button
+          className="disabled:opacity-40"
+          disabled={loading || page * pageSize >= total}
+          onClick={() => setPage((value) => value + 1)}
+        >
+          Next accounts page
+        </button>
+      </div>
       {openImportExcel && (
         <ImportExcel
           setOpenImportExcel={setOpenImportExcel}
-          fetchData={fetchData}
+          fetchData={refreshAccounts}
         />
       )}
       {openImportCsv && (
-        <ImportCsv setOpenImportCsv={setOpenImportCsv} fetchData={fetchData} />
+        <ImportCsv
+          setOpenImportCsv={setOpenImportCsv}
+          fetchData={(type) => {
+            setSelectedRole(type === "student" ? 4 : 5);
+            refreshAccounts();
+          }}
+        />
       )}
       {openPopUpUsers && (
         <PopUpUsers

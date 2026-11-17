@@ -5,10 +5,14 @@ import { AuthMiddleware } from "../../middlewares/authMiddleware.js";
 import { RoleMiddleware } from "../../middlewares/roleMiddleware.js";
 import { currentAdminMiddleware } from "../../middlewares/currentAdminMiddleware.js";
 import { uploadCsv } from "../../middlewares/uploadMiddleware.js";
+import dataToolsRoutes from "./admin/dataToolsRoutes.js";
 
 const uploadExcel = multer({ storage: multer.memoryStorage() }).single("file");
 
 const userRoutes = express.Router();
+if (process.env.DEMO_TOOLS === "true") {
+    userRoutes.use("/admin/data-tools", dataToolsRoutes);
+}
 
 // Staff accounts
 userRoutes.get("/admin/get-user", currentAdminMiddleware, UserHandler.listUsers);

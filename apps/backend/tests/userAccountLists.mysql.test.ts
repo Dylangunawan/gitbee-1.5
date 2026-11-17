@@ -12,13 +12,14 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 process.env.DATABASE_URL = databaseUrl ?? "mysql://test:test@127.0.0.1:3306/test";
 process.env.JWT_SECRET = "user-account-lists-mysql-secret";
 process.env.COOKIE_NAME = "account_lists_mysql";
+process.env.DEMO_TOOLS = "true";
 const { prisma } = await import("../api/prisma/client.js");
-const { default: userRoutes } = await import("../api/routes/user/userRoutes.js");
+const { default: routes } = await import("../api/routes/Routes.js");
 const { createLocalToken, getLocalRoles } = await import("../api/utils/auth/auth.js");
 
 const app = express();
 app.use(express.json(), cookieParser());
-app.use("/api/user", userRoutes);
+app.use("/api", routes);
 
 const suffix = randomBytes(5).toString("hex");
 const domain = `accounts-${suffix}.example.test`;
@@ -258,5 +259,48 @@ describe("account lists against MySQL", { skip: databaseUrl ? false : "set TEST_
     // The next request sees the change.
     assert.equal((await list<StaffItem>("get-staff-accounts", { roleFilter: "Lecturer", search: email })).total, 0);
     assert.equal((await list<StaffItem>("get-staff-accounts", { roleFilter: "SCC", search: email })).total, 1);
+  });
+
+  it("round-trips JSON demo imports through both account routes", async () => {
+    const files = [
+      { name: "new-students.csv", type: "student", rows: [{ line: 2, data: {
+        nim: `JSON-S-${suffix}`, name: "JSON Student", email: `json-student@${domain}`,
+        binusian_id: `JSON-B-${suffix}`, major_code: "CS", password: "roundtrip-secret",
+      } }] },
+      { name: "new-staff.xlsx", type: "staff", rows: [{ line: 2, data: {
+        lecturer_code: `JSON-L-${suffix}`, name: "JSON Lecturer", email: `json-staff@${domain}`,
+        binusian_id: "", role: "Lecturer", major_codes: "CS;DS", password: "roundtrip-secret",
+      } }] },
+    ];
+    const path = "/api/user/admin/data-tools/imports/";
+    for (const action of ["preview", "save"]) {
+      assert.equal((await request(app).post(path + action).send({ files })).status, 401);
+    }
+    const preview = await request(app).post(path + "preview").set("Cookie", adminCookie).send({ files });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.deepEqual(preview.body.data.files.map((file: { validCount: number }) => file.validCount), [1, 1]);
+    assert.ok(!JSON.stringify(preview.body).includes("roundtrip-secret"));
+    assert.equal(await prisma.user.count({ where: { email: { startsWith: "json-", endsWith: `@${domain}` } } }), 0);
+    const saved = await request(app).post(path + "save").set("Cookie", adminCookie).send({ files });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.deepEqual(saved.body.data.files.map((file: { createdCount: number }) => file.createdCount), [1, 1]);
+
+    const students = await list<StudentItem>("get-student-accounts", { pageSize: "1" });
+    assert.equal(students.items[0]?.student_id, `JSON-S-${suffix}`);
+    assert.equal(students.items[0]?.major_code, "CS");
+    const staff = await list<StaffItem>("get-staff-accounts", { roleFilter: "Lecturer", pageSize: "1" });
+    assert.equal(staff.items[0]?.lecturer_code, `JSON-L-${suffix}`);
+    assert.equal(staff.items[0]?.major_codes, "CS;DS");
+    assert.deepEqual(staff.items[0]?.hop_major, []);
+    for (const item of [...students.items, ...staff.items]) {
+      assert.ok(!("password" in item));
+      assert.ok(!("credential_version" in item));
+    }
+    const again = await request(app).post(path + "save").set("Cookie", adminCookie).send({ files });
+    assert.deepEqual(again.body.data.files.map((file: { createdCount: number; skippedCount: number }) =>
+      [file.createdCount, file.skippedCount]), [[0, 1], [0, 1]]);
+    const missing = await list<StudentItem>("get-student-accounts", { search: `missing-${suffix}` });
+    assert.equal(missing.total, 0);
+    assert.deepEqual(missing.items, []);
   });
 });

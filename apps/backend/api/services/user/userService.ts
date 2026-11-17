@@ -142,6 +142,7 @@ export default class UserService {
                     select: {
                         id: true,
                         student_id: true,
+                        major_code: true,
                         name: true,
                         email: true,
                         binusian_id: true,
@@ -168,6 +169,7 @@ export default class UserService {
                     select: {
                         id: true,
                         lecturer_code: true,
+                        major_codes: true,
                         name: true,
                         email: true,
                         binusian_id: true,

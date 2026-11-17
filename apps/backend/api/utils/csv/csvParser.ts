@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import { parse, type InfoRecord } from "csv-parse";
+import { parse as parseRecord } from "csv-parse/sync";
 import { z } from "zod";
 
 export class CsvParsingError extends Error {
@@ -60,6 +61,11 @@ const staffCsvRowSchema = z.object({
   major_codes: requiredText(255),
   password: requiredText(255),
 });
+
+export const csvRowSchemas = {
+  student: studentCsvRowSchema,
+  staff: staffCsvRowSchema,
+};
 
 // One schema per file type; its keys are the required header columns.
 const csvFileTypes = {
@@ -132,7 +138,18 @@ export async function parseAndValidateCsvBuffer<T extends CsvUploadType>(
   let headers: string[] = [];
   let invalidFieldLengthRows = 0;
 
+  // Excel uses semicolons in some locales. Detect from the template header,
+  // not from data cells where semicolons may be part of a major-code list.
+  let delimiter = ",";
+  try {
+    const [header] = parseRecord(buffer, { delimiter: ";", bom: true, trim: true, skip_empty_lines: true, to: 1 });
+    if (Array.isArray(header) && Object.keys(schema.shape).every((key) => header.includes(key))) delimiter = ";";
+  } catch {
+    // The normal parser below supplies the existing CSV syntax errors.
+  }
+
   const parser = parse({
+    delimiter,
     bom: true,
     cast: (value) => value.replace(/\uFEFF/g, ""),
     columns: (rawHeaders) => {

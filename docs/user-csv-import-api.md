@@ -30,10 +30,10 @@ All four need an admin session: the session cookie (`COOKIE_NAME`, sent with `cr
 Row rules:
 
 - Required: everything except `binusian_id`. A blank `binusian_id` is stored as NULL.
-- Maximum lengths match the `user` table: `nim` and `lecturer_code` 50, `name` 150, `email` 150, `binusian_id` 150, `password` 255.
+- Maximum lengths match the `user` table: `nim`, `lecturer_code` and `major_code` 50, `name` 150, `email` 150, `binusian_id` 150, `password` and `major_codes` 255.
 - `email` must be a valid address.
 - `role` (staff) is one of Lecturer, Admin, SCC or HoP, in any case.
-- `major_code` / `major_codes` are required but not stored yet: majors have no codes to match them against. For the same reason, HoP rows are rejected.
+- `major_code` / `major_codes` are required and stored as source text. They do not assign majors, because majors have no codes to match them against. HoP rows are still rejected for that reason.
 - A row with more or fewer fields than the header is rejected on its own; the rest of the file still imports.
 
 **What it writes.** One `user` row per accepted line, with the password hashed (never returned):
@@ -138,4 +138,8 @@ if (response.ok && result.status) {
 }
 ```
 
-`get-user` still serves the Manage Users tables (staff grouped by role, unpaged). The new routes add the student accounts it doesn't cover, and a paged, flat staff list.
+Manage Users and the demo use these paged student and staff routes. `get-user` remains available for clients that need staff grouped by role without pagination.
+
+## JSON demo integration
+
+The same accounts can be created by `POST /api/user/admin/data-tools/imports/save` after JSON preview. The demo and Manage Users read them through the account routes above. Student items additionally include nullable `major_code`; staff items include nullable `major_codes`. These retain imported source text and do not create HoP-major assignments. See [the demo guide](demo.md#account-route-integration) for the complete workflow.
