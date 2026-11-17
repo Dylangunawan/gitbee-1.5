@@ -1,22 +1,77 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMsal } from "@azure/msal-react";
-import { loginLocal } from "./actions";
+import { login, loginLocal } from "./actions";
 import { useAuth } from "@/app/context/AuthContext";
 import { dashboardPathForRole, SSO_BYPASS_ENABLED } from "@/lib/auth";
 
 export default function LocalLoginForm() {
   const router = useRouter();
-  const auth = useAuth();
-  const { instance, inProgress } = useMsal();
+  const { userData, setUserData } = useAuth();
+  const { instance, inProgress, accounts } = useMsal();
+  const callbackStartedRef = useRef(false);
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (
+      SSO_BYPASS_ENABLED ||
+      userData ||
+      inProgress !== "none" ||
+      accounts.length === 0 ||
+      callbackStartedRef.current
+    ) {
+      return;
+    }
+
+    const account = accounts[0];
+    if (!account) return;
+
+    callbackStartedRef.current = true;
+
+    const completeMicrosoftLogin = async () => {
+      try {
+        const response = await instance.acquireTokenSilent({
+          account,
+          scopes: ["user.read"],
+        });
+
+        if (!response) {
+          throw new Error("Token acquisition failed");
+        }
+
+        const idToken = response.idToken || account.idToken || "";
+        const result = await login(idToken);
+        if (result?.success) {
+          setUserData({
+            nim: result.data.nim,
+            name: result.data.Name,
+            email: result.data.Email,
+            role: result.data.ActiveRole,
+            listRole: result.data.Role,
+            microsoftToken: result.data.MicrosoftToken,
+          });
+
+          router.replace(dashboardPathForRole(result.data.ActiveRole) ?? "/");
+        } else {
+          setError(
+            result?.message ?? "Microsoft sign-in failed. Please try again."
+          );
+        }
+      } catch (err: unknown) {
+        console.error("An error occurred during Microsoft sign-in:", err);
+        setError("Unable to complete Microsoft sign-in. Please try again.");
+      }
+    };
+
+    void completeMicrosoftLogin();
+  }, [accounts, inProgress, instance, router, setUserData, userData]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -39,25 +94,14 @@ export default function LocalLoginForm() {
       return;
     }
 
-    if ("setSession" in auth && typeof auth.setSession === "function") {
-      auth.setSession({
-        nim: result.data.nim,
-        name: result.data.Name,
-        email: result.data.Email,
-        activeRole: result.data.ActiveRole,
-        roles: result.data.Role,
-        authMethod: "local",
-      });
-    } else if ("setUserData" in auth && typeof auth.setUserData === "function") {
-      auth.setUserData({
-        nim: result.data.nim,
-        name: result.data.Name,
-        email: result.data.Email,
-        role: result.data.ActiveRole,
-        listRole: result.data.Role,
-        microsoftToken: "",
-      });
-    }
+    setUserData({
+      nim: result.data.nim,
+      name: result.data.Name,
+      email: result.data.Email,
+      role: result.data.ActiveRole,
+      listRole: result.data.Role,
+      microsoftToken: "",
+    });
 
     router.replace(dashboardPathForRole(result.data.ActiveRole) ?? "/");
   };
@@ -84,6 +128,9 @@ export default function LocalLoginForm() {
     }
   };
 
+  const completingMicrosoftCallback =
+    !SSO_BYPASS_ENABLED && !userData && accounts.length > 0 && !error;
+
   return (
     <div className="min-h-screen w-full bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-md border border-gray-100 p-8">
@@ -108,77 +155,85 @@ export default function LocalLoginForm() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <div>
-            <label
-              htmlFor="identifier"
-              className="block text-sm font-medium text-gray-700 mb-1"
-            >
-              NIM / Email / Lecturer Code
-            </label>
-            <input
-              id="identifier"
-              name="identifier"
-              type="text"
-              autoComplete="username"
-              autoFocus
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="e.g. 2702000001, user@binus.edu, or D1234"
-              disabled={isSubmitting}
-              className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-binus focus:outline-none focus:ring-1 focus:ring-primary-binus disabled:bg-gray-100"
-            />
-          </div>
+        {completingMicrosoftCallback ? (
+          <p className="py-8 text-center text-sm text-gray-600">
+            Completing Microsoft sign-in...
+          </p>
+        ) : (
+          <>
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+              <div>
+                <label
+                  htmlFor="identifier"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  NIM / Email / Lecturer Code
+                </label>
+                <input
+                  id="identifier"
+                  name="identifier"
+                  type="text"
+                  autoComplete="username"
+                  autoFocus
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="e.g. 2702000001, user@binus.edu, or D1234"
+                  disabled={isSubmitting}
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-binus focus:outline-none focus:ring-1 focus:ring-primary-binus disabled:bg-gray-100"
+                />
+              </div>
 
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-700 mb-1"
-            >
-              Password
-            </label>
-            <div className="relative">
-              <input
-                id="password"
-                name="password"
-                type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+              <div>
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    disabled={isSubmitting}
+                    className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 pr-16 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-binus focus:outline-none focus:ring-1 focus:ring-primary-binus disabled:bg-gray-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    disabled={isSubmitting}
+                    className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-gray-500 hover:text-gray-700"
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
                 disabled={isSubmitting}
-                className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 pr-16 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-binus focus:outline-none focus:ring-1 focus:ring-primary-binus disabled:bg-gray-100"
-              />
+                className="w-full rounded-lg bg-primary-orange py-2.5 text-sm font-semibold text-white hover:opacity-95 transition disabled:opacity-60 cursor-pointer"
+              >
+                {isSubmitting ? "Signing in..." : "Sign In"}
+              </button>
+            </form>
+
+            <div className="mt-6 pt-4 border-t border-gray-100 text-center">
               <button
                 type="button"
-                onClick={() => setShowPassword((prev) => !prev)}
-                disabled={isSubmitting}
-                className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-gray-500 hover:text-gray-700"
+                onClick={() => loginMicrosoft()}
+                disabled={isSubmitting || inProgress !== "none"}
+                className="text-sm font-medium text-primary-orange hover:underline disabled:opacity-60 cursor-pointer"
               >
-                {showPassword ? "Hide" : "Show"}
+                Sign in with Microsoft SSO instead
               </button>
             </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full rounded-lg bg-primary-orange py-2.5 text-sm font-semibold text-white hover:opacity-95 transition disabled:opacity-60 cursor-pointer"
-          >
-            {isSubmitting ? "Signing in..." : "Sign In"}
-          </button>
-        </form>
-
-        <div className="mt-6 pt-4 border-t border-gray-100 text-center">
-          <button
-            type="button"
-            onClick={() => loginMicrosoft()}
-            disabled={isSubmitting || inProgress !== "none"}
-            className="text-sm font-medium text-primary-orange hover:underline disabled:opacity-60 cursor-pointer"
-          >
-            Sign in with Microsoft SSO instead
-          </button>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
