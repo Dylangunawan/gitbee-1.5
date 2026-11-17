@@ -1,15 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useMsal } from "@azure/msal-react";
 import { loginLocal } from "./actions";
 import { useAuth } from "@/app/context/AuthContext";
-import { dashboardPathForRole } from "@/lib/auth";
+import { dashboardPathForRole, SSO_BYPASS_ENABLED } from "@/lib/auth";
 
 export default function LocalLoginForm() {
   const router = useRouter();
   const auth = useAuth();
+  const { instance, inProgress } = useMsal();
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -38,7 +39,6 @@ export default function LocalLoginForm() {
       return;
     }
 
-    // Kompatibel dengan AuthContext yang memakai setSession maupun setUserData
     if ("setSession" in auth && typeof auth.setSession === "function") {
       auth.setSession({
         nim: result.data.nim,
@@ -60,6 +60,28 @@ export default function LocalLoginForm() {
     }
 
     router.replace(dashboardPathForRole(result.data.ActiveRole) ?? "/");
+  };
+
+  const loginMicrosoft = async () => {
+    if (isSubmitting || inProgress !== "none") return;
+
+    if (SSO_BYPASS_ENABLED) {
+      router.push("/login/microsoft");
+      return;
+    }
+
+    setError(null);
+    const loginRequest = {
+      scopes: ["user.read"],
+      prompt: "select_account",
+    };
+
+    try {
+      await instance.loginRedirect(loginRequest);
+    } catch (err: unknown) {
+      console.error(err);
+      setError("Unable to start Microsoft sign-in. Please try again.");
+    }
   };
 
   return (
@@ -148,12 +170,14 @@ export default function LocalLoginForm() {
         </form>
 
         <div className="mt-6 pt-4 border-t border-gray-100 text-center">
-          <Link
-            href="/login/microsoft"
-            className="text-sm font-medium text-primary-orange hover:underline"
+          <button
+            type="button"
+            onClick={() => loginMicrosoft()}
+            disabled={isSubmitting || inProgress !== "none"}
+            className="text-sm font-medium text-primary-orange hover:underline disabled:opacity-60 cursor-pointer"
           >
             Sign in with Microsoft SSO instead
-          </Link>
+          </button>
         </div>
       </div>
     </div>

@@ -32,6 +32,16 @@ function getAccountKey(email: unknown): string {
     return account.slice(0, 254);
 }
 
+function getDefaultAccountKey(body: unknown): string {
+    if (!body || typeof body !== "object") return "";
+    const { identifier, email } = body as { identifier?: unknown; email?: unknown };
+    const effectiveIdentifier =
+        typeof identifier === "string" && identifier.trim().length > 0
+            ? identifier
+            : email;
+    return getAccountKey(effectiveIdentifier);
+}
+
 export function createLoginRateLimitMiddleware(options: {
     windowMs?: number;
     maxIpFailures?: number;
@@ -82,7 +92,7 @@ export function createLoginRateLimitMiddleware(options: {
             }
         }
 
-        const account = options.accountKey?.(req, res) ?? getAccountKey(req.body?.email);
+        const account = options.accountKey?.(req, res) ?? getDefaultAccountKey(req.body);
         const accountKey = account ? `account:${account}` : "";
         let accountEntry = accountKey ? attempts.get(accountKey) : undefined;
         if (accountEntry && accountEntry.pending === 0 && now - accountEntry.windowStartedAt >= windowMs) {

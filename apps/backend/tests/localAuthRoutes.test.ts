@@ -210,4 +210,42 @@ describe("local authentication routes", () => {
     assert.equal((await request(app).post("/auth/login-local/role").set("Cookie", session()).send({ role: "Lecturer" })).status, 401);
     assert.equal(credentialReads, 0);
   });
+
+  it("limits password guesses by account across IPs when credentials are sent as identifier", async () => {
+    user = { ...staff, id: 40, email: "throttled@example.com", lecturer_code: "D5040" };
+    stub(prisma.user, "findFirst", async () => ({ ...user, credential_version: credentialVersion }));
+
+    // 1. Email supplied via `identifier` shares the same normalized bucket as `email`
+    for (let index = 0; index < 5; index += 1) {
+      const attempt = await request(app)
+        .post("/auth/login-local")
+        .set("X-Forwarded-For", `198.51.100.${index + 10}`)
+        .send({ identifier: "  Throttled@Example.COM ", password: "wrong-password" });
+      assert.equal(attempt.status, 401);
+    }
+    const blockedEmail = await request(app)
+      .post("/auth/login-local")
+      .set("X-Forwarded-For", "198.51.100.99")
+      .send({ email: user.email, password: originalPassword });
+    assert.equal(blockedEmail.status, 429);
+    assert.ok(Number(blockedEmail.headers["retry-after"]) > 0);
+    assert.equal(credentialReads, 5);
+
+    // 2. Non-email identifiers (NIM and case-insensitive lecturer code) are also throttled per account across IPs
+    credentialReads = 0;
+    for (let index = 0; index < 5; index += 1) {
+      const attempt = await request(app)
+        .post("/auth/login-local")
+        .set("X-Forwarded-For", `203.0.113.${index + 10}`)
+        .send({ identifier: index % 2 === 0 ? "D5040" : " d5040 ", password: "wrong-password" });
+      assert.equal(attempt.status, 401);
+    }
+    const blockedCode = await request(app)
+      .post("/auth/login-local")
+      .set("X-Forwarded-For", "203.0.113.99")
+      .send({ identifier: "D5040", password: originalPassword });
+    assert.equal(blockedCode.status, 429);
+    assert.ok(Number(blockedCode.headers["retry-after"]) > 0);
+    assert.equal(credentialReads, 5);
+  });
 });
