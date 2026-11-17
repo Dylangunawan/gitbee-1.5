@@ -39,6 +39,8 @@ app.use("/api", routes)
 app.use("/api", notFoundHandler);
 app.use(errorHandler);
 
-app.listen(Number(port), process.env.HOST ?? "0.0.0.0", () => {
+const onListening = () => {
   console.log(`Application is running on port ${port}.`);
-});
+};
+if (process.env.HOST) app.listen(Number(port), process.env.HOST, onListening);
+else app.listen(Number(port), onListening);

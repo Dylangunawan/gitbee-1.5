@@ -5,12 +5,14 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
+import { stopAppTree, stopLocalDatabase } from "./demoProcesses.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const state = path.join(root, ".demo");
 const backend = path.join(root, "apps/backend");
 const frontend = path.join(root, "apps/frontend");
 const children = [];
+let localDatabase;
 mkdirSync(state, { recursive: true });
 const secretPath = path.join(state, "jwt-secret");
 if (!existsSync(secretPath))
@@ -25,6 +27,8 @@ const env = {
   COOKIE_NAME: "gitbee_demo_token",
   BYPASS_SSO: "false",
   DEMO_IMPORT_LOG: "true",
+  DEMO_TOOLS: "true",
+  NEXT_PUBLIC_DEMO: "true",
   NEXT_PUBLIC_COOKIE_NAME: "gitbee_demo_token",
   NEXT_PUBLIC_BACKEND_API: "http://localhost:5001/api/",
   NEXT_PUBLIC_BYPASS_SSO: "false",
@@ -46,24 +50,26 @@ function run(command, args, cwd = root) {
 function node(script, args, cwd) {
   run(process.execPath, [script, ...args], cwd);
 }
-function start(command, args, cwd) {
+function start(command, args, cwd, kind = "app") {
   const child = spawn(command, args, {
     cwd,
     env,
     stdio: "inherit",
     windowsHide: true,
+    // Unix uses a process group; Windows stops the tree with taskkill /T.
+    detached: process.platform !== "win32",
   });
   child.on("error", (error) => {
     console.error(error);
     shutdown(1);
   });
   child.on("exit", (code) => {
-    if (code && !stopping) {
+    if (!stopping) {
       console.error(`Demo process exited (${code}).`);
-      shutdown(1);
+      void shutdown(code || 1);
     }
   });
-  children.push(child);
+  if (kind === "app") children.push(child);
   return child;
 }
 function canConnect(port) {
@@ -88,10 +94,17 @@ async function waitForDatabase() {
   throw new Error("Demo database did not start on port 3309.");
 }
 let stopping = false;
-function shutdown(code = 0) {
+async function shutdown(code = 0) {
   if (stopping) return;
   stopping = true;
-  for (const child of children) child.kill();
+  for (const child of children) {
+    try { await stopAppTree(child); }
+    catch (error) { console.error(error.message); code = 1; }
+  }
+  if (localDatabase) {
+    try { await stopLocalDatabase(localDatabase.child, localDatabase.mysqlBin); }
+    catch (error) { console.error(error.message); code = 1; }
+  }
   process.exitCode = code;
 }
 process.on("SIGINT", () => shutdown());
@@ -138,7 +151,7 @@ try {
           `--datadir=${data}`,
           "--port=3309",
         ]);
-      start(
+      const databaseChild = start(
         path.join(mysqlBin, "mysqld.exe"),
         [
           `--defaults-file=${path.join(data, "my.ini")}`,
@@ -146,7 +159,9 @@ try {
           "--console",
         ],
         root,
+        "database",
       );
+      localDatabase = { child: databaseChild, mysqlBin };
       await waitForDatabase();
       run(path.join(mysqlBin, "mysql.exe"), [
         "--host=127.0.0.1",
@@ -239,8 +254,9 @@ try {
     ],
     frontend,
   );
+  const databaseAddress = new URL(env.DATABASE_URL);
   console.log(
-    "\nGitBee demo: http://localhost:8000/demo-login\nAdmin: admin@example.test\nPassword: GitbeeDummy#2026\nDatabase: gitbee_demo on localhost:3309\nCtrl+C stops app processes. Docker data is retained.\n",
+    `\nGitBee demo: http://localhost:8000/demo-login\nAdmin: admin@example.test\nPassword: GitbeeDummy#2026\nDatabase: ${databaseAddress.pathname.slice(1)} on ${databaseAddress.hostname}:${databaseAddress.port || "3306"}\nCtrl+C stops apps and gracefully shuts down launcher-owned MariaDB. External and Docker databases are left running.\n`,
   );
 } catch (error) {
   console.error(error.message);

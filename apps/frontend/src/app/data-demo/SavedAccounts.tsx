@@ -9,6 +9,8 @@ import {
 import { Grid } from "./DataGrid";
 import styles from "./demo.module.css";
 
+type Query = { type: AccountType; search: string; role: StaffRole | ""; page: number };
+
 export default function SavedAccounts({
   autoLoad,
   initialType,
@@ -21,26 +23,20 @@ export default function SavedAccounts({
   const [type, setType] = useState<AccountType>(initialType);
   const [search, setSearch] = useState("");
   const [role, setRole] = useState<StaffRole | "">("");
-  const [saved, setSaved] = useState<AccountPage | null>(null);
-  const [fetching, setFetching] = useState(false);
-  const [error, setError] = useState("");
-  const request = useRef<AbortController | null>(null);
-  const [query, setQuery] = useState<{
-    type: AccountType;
-    search: string;
-    role: StaffRole | "";
-    page: number;
-  } | null>(
+  const [result, setResult] = useState<{ query: Query; data: AccountPage | null; error: string } | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const [query, setQuery] = useState<Query | null>(
     autoLoad ? { type: initialType, search: "", role: "", page: 1 } : null,
   );
+
+  const saved = result?.query === query ? result?.data : null;
+  const error = result?.query === query ? result?.error : "";
+  const fetching = query !== null && result?.query !== query;
 
   useEffect(() => {
     if (!query) return;
     const controller = new AbortController();
-    request.current = controller;
-    setFetching(true);
-    setError("");
-    setSaved(null);
+    requestRef.current = controller;
     getAccounts(query.type, {
       search: query.search,
       page: query.page,
@@ -48,29 +44,21 @@ export default function SavedAccounts({
       signal: controller.signal,
     })
       .then((data) => {
-        if (!controller.signal.aborted) setSaved(data);
+        if (!controller.signal.aborted) setResult({ query, data, error: "" });
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "Could not fetch accounts. Please retry.",
-          );
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setFetching(false);
+        if (!controller.signal.aborted) setResult({
+          query, data: null,
+          error: cause instanceof Error ? cause.message : "Could not fetch accounts. Please retry.",
+        });
       });
     return () => controller.abort();
   }, [query]);
 
   function changeType(next: AccountType) {
-    request.current?.abort();
+    requestRef.current?.abort();
     setType(next);
     setRole("");
-    setSaved(null);
-    setError("");
-    setFetching(false);
     setQuery(null);
   }
 

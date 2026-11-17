@@ -7,6 +7,12 @@ export function proxy(req: NextRequest) {
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const pathname = req.nextUrl.pathname;
 
+  const isDemoLogin = /^\/demo-login(?:\/|$)/.test(pathname);
+  if ((isDemoLogin || /^\/data-demo(?:\/|$)/.test(pathname)) && process.env.NEXT_PUBLIC_DEMO !== "true") {
+    return new NextResponse(null, { status: 404 });
+  }
+  if (isDemoLogin) return NextResponse.next();
+
   if (!token) {
     return NextResponse.redirect(new URL("/login/microsoft", req.url));
   }
@@ -78,5 +84,6 @@ export const config = {
     "/manage-transactions/:path*",
     "/manage-users/:path*",
     "/data-demo/:path*",
+    "/demo-login/:path*",
   ],
 };

@@ -10,7 +10,9 @@ import dataToolsRoutes from "./admin/dataToolsRoutes.js";
 const uploadExcel = multer({ storage: multer.memoryStorage() }).single("file");
 
 const userRoutes = express.Router();
-userRoutes.use("/admin/data-tools", dataToolsRoutes);
+if (process.env.DEMO_TOOLS === "true") {
+    userRoutes.use("/admin/data-tools", dataToolsRoutes);
+}
 
 // Staff accounts
 userRoutes.get("/admin/get-user", currentAdminMiddleware, UserHandler.listUsers);

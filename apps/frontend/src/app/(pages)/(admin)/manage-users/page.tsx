@@ -31,7 +31,7 @@ const Page = () => {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
-  const request = useRef<AbortController | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
   const pageSize = 20;
   const [openImportExcel, setOpenImportExcel] = useState(false);
   const [openImportCsv, setOpenImportCsv] = useState(false);
@@ -41,9 +41,9 @@ const Page = () => {
   const [loading, setLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
-    request.current?.abort();
+    requestRef.current?.abort();
     const controller = new AbortController();
-    request.current = controller;
+    requestRef.current = controller;
     setLoading(true);
     setError("");
     setUsers([]);
@@ -127,7 +127,7 @@ const Page = () => {
 
   useEffect(() => {
     void fetchData();
-    return () => request.current?.abort();
+    return () => requestRef.current?.abort();
   }, [fetchData, revision]);
 
   return (
@@ -319,7 +319,7 @@ const Page = () => {
       )}
       {openPopUpUsers && (
         <PopUpUsers
-          fetchData={refreshAccounts}
+          fetchData={fetchData}
           setOpenPopUpUsers={setOpenPopUpUsers}
           selectedUserToUpdate={selectedUserToUpdate}
         />

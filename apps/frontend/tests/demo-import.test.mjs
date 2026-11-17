@@ -137,3 +137,32 @@ test("accepts more than four files and bounds their combined row count", async (
     /4,000 rows/,
   );
 });
+
+test("ignores formatted empty ranges and keeps sparse source row numbers", () => {
+  const sheet = xlsx.utils.aoa_to_sheet([
+    headers.split(","), ["001", "Ada", "ada@example.test", "", "CS", "secret"],
+  ]);
+  // Excel records formatting far beyond the last populated cell.
+  sheet.F1500 = { t: "z", z: "@" };
+  sheet["!ref"] = "A1:F1500";
+  const workbook = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(workbook, sheet, "Students");
+  const parse = () => parseImportFile("formatted.xlsx", bytes(xlsx.write(workbook, { type: "buffer", bookType: "xlsx" })));
+  assert.equal(parse().rows.length, 1);
+  xlsx.utils.sheet_add_aoa(sheet, [["002", "Bea", "bea@example.test", "", "CS", "secret"]], { origin: "A1200" });
+  assert.deepEqual(parse().rows.map(row => row.line), [2, 1200]);
+  for (let index = 0; index < 999; index++) {
+    xlsx.utils.sheet_add_aoa(sheet, [[String(index), "Name", "a@example.test", "", "CS", "secret"]], { origin: `A${2000 + index}` });
+  }
+  assert.throws(parse, /1,000 data rows/);
+});
+
+test("names non-UTF-8 CSV files and tells the user how to save them", () => {
+  const invalid = Buffer.concat([Buffer.from(headers + "\n001,Andr"), Buffer.from([0xe9]), Buffer.from(",a@example.test,,CS,secret")]);
+  assert.throws(() => parseImportFile("excel-export.csv", bytes(invalid)), /excel-export.csv: save CSV files using UTF-8 encoding/);
+});
+
+test("accepts semicolon-separated Excel CSVs without splitting quoted cells", () => {
+  const parsed = parseImportFile("regional.csv", csv(headers.replaceAll(",", ";") + '\n001;"Ana; Ada";ana@example.test;;CS;secret'));
+  assert.equal(parsed.rows[0].data.name, "Ana; Ada");
+});

@@ -24,38 +24,46 @@ export function parseImportFile(name: string, bytes: ArrayBuffer): ImportFile {
   const extension = name.split(".").pop()?.toLowerCase();
   if (extension !== "csv" && extension !== "xlsx")
     throw new Error(name + ": choose CSV or Excel (.xlsx).");
-  const input =
-    extension === "csv"
-      ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-      : bytes;
+  let input: string | ArrayBuffer = bytes;
+  if (extension === "csv") {
+    try {
+      input = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error(name + ": save CSV files using UTF-8 encoding (CSV UTF-8 in Excel).");
+    }
+  }
   const workbook = xlsx.read(input, {
     type: extension === "csv" ? "string" : "array",
     raw: true,
-    sheetRows: 1002,
     cellFormula: true,
   });
   if (workbook.SheetNames.length !== 1)
     throw new Error(name + ": use exactly one worksheet.");
   const sheet = workbook.Sheets[workbook.SheetNames[0]!];
   if (!sheet?.["!ref"]) throw new Error(name + ": no rows found.");
-  const range = xlsx.utils.decode_range(sheet["!fullref"] ?? sheet["!ref"]);
-  if (range.e.r > 1000 || range.e.c > 30)
-    throw new Error(name + ": use at most 1,000 data rows and 31 columns.");
+  // Excel's used range includes formatted empty cells. Inspect populated cells
+  // instead, preserving physical row numbers even across large blank gaps.
+  const populated = new Map<number, string[]>();
   for (const [address, cell] of Object.entries(sheet)) {
-    if (!address.startsWith("!") && cell.f)
+    if (address.startsWith("!")) continue;
+    if (cell.f)
       throw new Error(
         name + ": replace formulas with plain values (" + address + ").",
       );
+    if (cell.v === undefined || cell.v === null || cell.t === "z") continue;
+    const value = xlsx.utils.format_cell(cell).trim();
+    if (!value) continue;
+    const { r, c } = xlsx.utils.decode_cell(address);
+    if (r >= 1048576 || c > 30)
+      throw new Error(name + ": use at most 31 columns within Excel's row limit.");
+    const row = populated.get(r) ?? [];
+    row[c] = value;
+    populated.set(r, row);
+    if (populated.size - (populated.has(0) ? 1 : 0) > 1000)
+      throw new Error(name + ": use at most 1,000 data rows.");
   }
-  const values = xlsx.utils.sheet_to_json<string[]>(sheet, {
-    header: 1,
-    raw: false,
-    defval: "",
-    blankrows: true,
-    range: 0,
-  });
-  const headers = (values[0] ?? []).map((value) =>
-    value.replaceAll("\uFEFF", "").trim(),
+  const headers = Array.from(populated.get(0) ?? [], (value) =>
+    (value ?? "").replaceAll("\uFEFF", "").trim(),
   );
   const type = headers.includes("nim") ? "student" : "staff";
   const expected = importHeaders[type];
@@ -65,10 +73,10 @@ export function parseImportFile(name: string, bytes: ArrayBuffer): ImportFile {
     expected.some((key) => !headers.includes(key))
   )
     throw new Error(name + ": use the student or staff template headers.");
-  const rows = values
-    .slice(1)
-    .map((row, index) => ({ row, line: index + 2 }))
-    .filter(({ row }) => row.some((value) => value.trim() !== ""))
+  const rows = [...populated.entries()]
+    .filter(([index]) => index > 0)
+    .sort(([left], [right]) => left - right)
+    .map(([index, row]) => ({ row, line: index + 1 }))
     .map(({ row, line }) => {
       if (row.length > headers.length)
         throw new Error(name + ": row " + line + " has extra columns.");

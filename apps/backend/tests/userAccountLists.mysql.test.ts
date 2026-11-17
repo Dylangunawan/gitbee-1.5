@@ -12,6 +12,7 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 process.env.DATABASE_URL = databaseUrl ?? "mysql://test:test@127.0.0.1:3306/test";
 process.env.JWT_SECRET = "user-account-lists-mysql-secret";
 process.env.COOKIE_NAME = "account_lists_mysql";
+process.env.DEMO_TOOLS = "true";
 const { prisma } = await import("../api/prisma/client.js");
 const { default: routes } = await import("../api/routes/Routes.js");
 const { createLocalToken, getLocalRoles } = await import("../api/utils/auth/auth.js");

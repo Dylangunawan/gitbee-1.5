@@ -21,7 +21,7 @@ const requestSchema = z
               .array(
                 z
                   .object({
-                    line: z.number().int().min(2).max(100000),
+                    line: z.number().int().min(2).max(1048576),
                     data: z.record(z.string().max(50), z.string().max(2000)),
                   })
                   .strict(),
@@ -117,6 +117,7 @@ export function logDemoReceipt(
   // Explicitly opt in for the local demo. JSON.stringify escapes newlines in
   // filenames and cells, and only validated, non-credential fields are logged.
   if (process.env.DEMO_IMPORT_LOG !== "true") return;
+  // eslint-disable-next-line no-console -- opt-in demo receipt log
   console.info(
     "[data-demo] " +
       JSON.stringify({

@@ -24,7 +24,9 @@ Open **http://localhost:8000/demo-login** and sign in:
 | HoP | hop@example.test | GitbeeDummy#2026 |
 | Student | student@example.test | GitbeeDummy#2026 |
 
-The data workspace requires Admin membership. The other accounts are available for existing role dashboards. All names, addresses, projects, and IDs are synthetic. The email domain `example.test` does not send email.
+The data workspace requires Admin membership. The other accounts demonstrate local role sign-in, but the role dashboards show empty data without the external BLUEJACK semester service. The launcher does not mock that service. Seeded projects are visible in Explore and the database workspace. All names, addresses, projects, and IDs are synthetic. The email domain `example.test` does not send email.
+
+Demo tools are disabled by default. The launcher alone sets `DEMO_TOOLS=true` for `/api/user/admin/data-tools` and `NEXT_PUBLIC_DEMO=true` for `/demo-login` and `/data-demo`. Normal starts and production builds without these flags return 404 for the demo tools; Manage Users and the account APIs remain available. `NEXT_PUBLIC_DEMO` is fixed at frontend build time, so changing it at deployment does not enable an already-built image.
 
 The launcher binds the frontend and backend to loopback. Local MariaDB also binds to loopback; the Docker database publishes only `127.0.0.1:3309`. This is a local presentation setup. Keep the known demo passwords confined to the demo environment.
 
@@ -41,7 +43,7 @@ $env:DATABASE_URL = 'mysql://demo_user:password@127.0.0.1:3309/gitbee_demo'
 npm run demo
 ```
 
-Seeding skips a database that already has records. Restarting never clears imported records. Stop with Ctrl+C; Docker users can additionally run `docker stop gitbee-demo-db` to stop the database while retaining its data. The app's older `prisma db seed` command is destructive and is not used by this launcher.
+Seeding skips a database that already has records. Restarting never clears imported records. Stop with Ctrl+C. The launcher stops app process trees and shuts down its own MariaDB gracefully with `mysqladmin`; external databases are left running. Docker users can additionally run `docker stop gitbee-demo-db` to stop the database while retaining its data. The app's older `prisma db seed` command is destructive and is not used by this launcher.
 
 ## Five-minute presentation
 
@@ -71,8 +73,9 @@ Staff columns:
 lecturer_code,name,email,binusian_id,role,major_codes,password
 ```
 
-- UTF-8 CSV or `.xlsx`; older `.xls` files must be saved as `.xlsx` first.
-- Limit: 5 MB, 1,000 data rows per file, 4,000 total data rows per JSON batch, with no fixed file-count limit. Excel files must contain one worksheet and plain values. The legacy server-side file parser also caps archives at 20 MB expanded. Formulas and encrypted files are rejected.
+- UTF-8 CSV (comma or semicolon separated) or `.xlsx`; older `.xls` files must be saved as `.xlsx` first. In Excel, use CSV UTF-8 to preserve accented names. Manage Users accepts the same CSV separators.
+- Limit: 5 MB, 1,000 data rows per file, 4,000 total data rows per JSON batch, with no fixed file-count limit. Excel files must contain one worksheet and plain values. Formulas and encrypted files are rejected.
+- The row limit counts rows containing values, not formatting-only empty cells; reported row numbers still match the source worksheet.
 - Headers must match the template. All headers are required, but `binusian_id` cells may be blank. Keep identifiers as text or use an Excel number format that preserves leading zeroes.
 - Preview validates row structure and field values. Import revalidates the file, rejects unsupported HoP rows, checks duplicates against the actual database collation, hashes passwords, and inserts valid accounts.
 - The report separates created, skipped, and failed rows. Imports are partial: valid, nonduplicate rows are inserted even when other rows fail.
@@ -87,7 +90,6 @@ All routes below require a current Admin session cookie and return `Cache-Contro
 - `POST /api/user/admin/data-tools/imports/preview`: validates a JSON batch and returns per-file counts, validation errors, and up to ten preview rows without passwords. Does not write.
 - `POST /api/user/admin/data-tools/imports/save`: receives the same JSON shape, validates again, maps valid rows to Prisma `User` objects, hashes passwords, and inserts accounts. Files are processed in order so later files see earlier duplicates. Partial imports retain per-file errors.
 - `GET /api/user/admin/get-student-accounts` and `GET /api/user/admin/get-staff-accounts`: the Get Data table uses the paginated account routes from PR #69. Responses contain `{ items, total, page, pageSize }` inside `{ message, status, data }`. Both support search and pagination; staff also supports a role filter. The student response includes `major_code`, and staff includes `major_codes` and HoP major names. Passwords and credential versions are never selected.
-- `GET /api/user/admin/data-tools/saved-users?page=1` remains available for compatibility with the original demo API.
 
 Example request (`Content-Type: application/json`):
 
@@ -165,26 +167,24 @@ erDiagram
 
 ## Verification
 
-The JSON round-trip update passed 182 backend tests (including real database integration checks on `gitbee_demo_roundtrip_test`), 11 frontend tests, both TypeScript checks, and targeted backend lint. The browser walkthrough on a fresh `gitbee_demo_roundtrip` database confirmed four-file preview, JSON save, 14 created accounts with 14 duplicates skipped, persisted records after refresh, major-code values, pagination, and invalid-row reports. Receipt logs were observed with sample rows and without password fields.
+Backend database tests require `TEST_DATABASE_URL` pointing at a migrated, dedicated test database. Never point them at real or demo presentation data. Run the normal parallel test command; the JSON round-trip test filters account pages to its unique run domain so other tests cannot move its rows between pages.
 
-Frontend production compilation and its TypeScript phase passed. The full build remains blocked by a Windows `EPERM` directory-creation error while prerendering `/demo-login`. Frontend ESLint remains blocked before checking files by the installed dependency's missing `zod-validation-error/v4` export. These environment issues were also present in the previous demo. The development app runs successfully. Docker startup and external SSO were not retested for this update.
+Run backend and frontend `npm test`, `npm run lint`, and TypeScript checks, plus `node --test scripts/tests/*.test.mjs` from the repository root for launcher process cleanup. A production `npm run build` without demo flags must leave both demo pages unavailable.
 
-Backend tests use `TEST_DATABASE_URL` to opt into database integration checks. Never point test commands at a database containing real data.
-
-Feedback update (2026-11-16): removed the example-derived four-file cap, made step 2 permanently visible, and simplified the sample loader to one file per account type. Targeted backend tests (9), frontend tests (12), both TypeScript checks, and targeted backend lint passed. Six-file batches and the total row limit are covered.
+Both apps use SheetJS 0.20.3 from the [official CDN](https://docs.sheetjs.com/docs/getting-started/installation/nodejs/), replacing the vulnerable npm-only 0.18.5 release. The lockfile pins the same tarball and integrity in both workspaces.
 
 ## Account route integration
 
-The data-tools router is mounted at `/admin/data-tools` by the consolidated `userRoutes.ts`, so preview/save, samples, and the database explorer remain reachable after the backend refactor.
+The data-tools router is mounted at `/admin/data-tools` only when `DEMO_TOOLS=true`. It exposes JSON preview/save, samples, and the database explorer. The unused multipart demo imports and `/saved-users` have been removed; account reads use the student/staff routes.
 
 The demo Get Data section offers Students and Staff, search, staff-role filtering, and 20-row pages. After a JSON save it clears filters, returns to page one, and fetches the imported type (Students for mixed batches). Switch to Staff and click Get Data to inspect staff from a mixed batch. Requests carry the session cookie, disable caching, and cancel stale requests. Errors clear old results and allow retry.
 
-Manage Users uses the same two account routes. Its Students view is read-only; staff views retain existing update controls. CSV import success selects Students or All staff, clears search, and reloads page one. The existing class-roster Students page remains separate from student login accounts.
+Manage Users uses the same two account routes. Its Students view is read-only; staff views retain existing update controls. CSV import success selects Students or All staff, clears search, and reloads page one. Staff Update keeps the current search, role filter, and page. The existing class-roster Students page remains separate from student login accounts.
+
+Manage Users follows local login eligibility from PR #69. Legacy staff roles such as `admin` or `HoP ` do not match the exact role rules, so those accounts no longer appear here for repair. This does not alter stored roles; correcting existing records requires a separate administrative data correction.
 
 Imported major codes are source text, not HoP assignments. Rows imported before the major-code migration may have null major-code fields; duplicate imports do not overwrite them.
 
 The integration includes current `main` through `cb4ca27` (PRs #69 and #70). It preserves the reviewed account rules, literal wildcard search, pagination limits, and repeatable-read transactions. The account predicates use `REGEXP` with a case-sensitive Unicode collation so the local MariaDB demo can apply the same login rules without the MySQL-only `REGEXP_LIKE` function.
 
-Verification after this refresh: all 241 backend tests passed with no skips against the dedicated MariaDB `gitbee_demo_routes_test` database, including JSON preview/save followed by both account-list routes, preserved major codes, duplicate handling, account-rule parity, access checks, literal search, large offsets, and concurrent role changes. All 20 frontend tests and both TypeScript checks passed, as did targeted backend lint. Read-only route checks against the existing demo returned 42 students and 15 staff successfully. MySQL 8 was not rerun because the Docker engine was unavailable.
-
-Before this backend refresh, browser checks covered JSON sample preview/save, automatic account refresh, pagination, staff filters and HoP majors, empty search, reload persistence, and Manage Users search. The frontend was unchanged by the refresh. Frontend lint remains blocked by the installed dependency's missing `zod-validation-error/v4` export; a production build was not rerun for this integration.
+Review follow-up validation is recorded in PR #73. Earlier local Windows builds and frontend lint hit environment-specific errors; these were not general project limitations. The reviewer independently verified production builds and MySQL 8 compatibility. External SSO and BLUEJACK-backed dashboards are outside this local demo.

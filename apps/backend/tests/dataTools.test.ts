@@ -7,6 +7,7 @@ import request from "supertest";
 process.env.DATABASE_URL ??= "mysql://test:test@127.0.0.1:3306/test";
 process.env.JWT_SECRET = "data-tools-test-secret";
 process.env.COOKIE_NAME = "test_auth";
+process.env.DEMO_TOOLS = "true";
 const { default: routes } = await import(
   "../api/routes/user/admin/dataToolsRoutes.js"
 );
@@ -57,7 +58,7 @@ describe("Admin data workspace", () => {
     ]) {
       assert.equal((await request(app).get(path)).status, 401);
     }
-    assert.equal((await request(app).post("/student/import")).status, 401);
+    assert.equal((await request(app).post("/imports/save")).status, 401);
     delegate.findUnique = async () => ({
       ...admin,
       role: "Student",
@@ -68,73 +69,20 @@ describe("Admin data workspace", () => {
       403,
     );
     assert.equal(
-      (await request(app).post("/student/import").set("Cookie", cookie)).status,
+      (await request(app).post("/imports/save").set("Cookie", cookie)).status,
       403,
     );
   });
-  it("previews without writing or exposing passwords, imports and skips duplicates", async () => {
-    const data = sampleFile("student", "xlsx", true);
-    const preview = await request(app)
-      .post("/student/preview")
-      .set("Cookie", cookie)
-      .attach("file", data, "students.xlsx");
-    assert.equal(preview.status, 200);
-    assert.equal(preview.body.data.validCount, 9);
+  it("rejects removed endpoints and invalid database requests", async () => {
+    for (const path of ["/student/preview", "/student/import", "/staff/import"]) {
+      const response = await request(app).post(path).set("Cookie", cookie)
+        .attach("file", sampleFile("staff", "csv"), "staff.csv");
+      assert.equal(response.status, 404);
+    }
+    assert.equal((await request(app).get("/saved-users").set("Cookie", cookie)).status, 404);
     assert.equal(fake.users.length, 0);
-    assert.ok(!JSON.stringify(preview.body).includes("GitbeeDummy"));
-    assert.ok(!("password" in preview.body.data.rows[0]));
-    const imported = await request(app)
-      .post("/student/import")
-      .set("Cookie", cookie)
-      .attach("file", data, "students.xlsx");
-    assert.equal(imported.body.data.createdCount, 8);
-    assert.equal(imported.body.data.skippedCount, 1);
-    assert.equal(imported.body.data.failedCount, 1);
-    const { verifyPassword } = await import("../api/utils/auth/password.js");
-    assert.equal(
-      await verifyPassword("GitbeeDummy#2026", fake.users[0]!.password),
-      true,
-    );
-    const again = await request(app)
-      .post("/student/import")
-      .set("Cookie", cookie)
-      .attach("file", data, "students.xlsx");
-    assert.equal(again.body.data.createdCount, 0);
-    assert.equal(again.body.data.skippedCount, 9);
-    assert.equal(fake.users.length, 8);
-  });
-  it("rejects unsupported files, excessive size and SQL-like table names", async () => {
-    assert.equal(
-      (
-        await request(app)
-          .post("/student/preview")
-          .set("Cookie", cookie)
-          .attach("file", Buffer.from("hello"), "fake.pdf")
-      ).status,
-      400,
-    );
-    assert.equal(
-      (
-        await request(app)
-          .post("/student/preview")
-          .set("Cookie", cookie)
-          .attach("file", Buffer.alloc(5 * 1024 * 1024 + 1), "large.csv")
-      ).status,
-      413,
-    );
-    assert.equal(
-      (
-        await request(app)
-          .get("/database/user%3BDELETE%20FROM%20user")
-          .set("Cookie", cookie)
-      ).status,
-      404,
-    );
-    assert.equal(
-      (await request(app).get("/database/user?page=-1").set("Cookie", cookie))
-        .status,
-      400,
-    );
+    assert.equal((await request(app).get("/database/user%3BDELETE%20FROM%20user").set("Cookie", cookie)).status, 404);
+    assert.equal((await request(app).get("/database/user?page=-1").set("Cookie", cookie)).status, 400);
   });
   it("serves a usable sample workbook as a download", async () => {
     const response = await request(app)
@@ -146,14 +94,8 @@ describe("Admin data workspace", () => {
   });
 
   it("validates JSON on save, preserves major codes, and never logs passwords", async () => {
-    const { parseSpreadsheet } = await import(
-      "../api/utils/csv/spreadsheetParser.js"
-    );
-    const parsed = await parseSpreadsheet(
-      sampleFile("student", "csv"),
-      "students.csv",
-      "student",
-    );
+    const { parseAndValidateCsvBuffer } = await import("../api/utils/csv/csvParser.js");
+    const parsed = await parseAndValidateCsvBuffer(sampleFile("student", "csv"), "student");
     const data = {
       files: [
         {
@@ -208,7 +150,6 @@ describe("Admin data workspace", () => {
   });
 
   it("protects new routes and rejects malformed or excessive JSON batches", async () => {
-    assert.equal((await request(app).get("/saved-users")).status, 401);
     assert.equal(
       (await request(app).post("/imports/save").send({ files: [] })).status,
       401,
@@ -240,16 +181,7 @@ describe("Admin data workspace", () => {
       ).status,
       415,
     );
-    assert.equal(
-      (await request(app).get("/saved-users?page=-1").set("Cookie", cookie))
-        .status,
-      400,
-    );
     delegate.findUnique = async () => ({ ...admin, role: "Student" });
-    assert.equal(
-      (await request(app).get("/saved-users").set("Cookie", cookie)).status,
-      403,
-    );
     assert.equal(
       (
         await request(app)
@@ -261,23 +193,16 @@ describe("Admin data workspace", () => {
     );
   });
 
-  it("returns an error when the database read fails", async () => {
-    const user = prisma.user as Record<"count" | "findMany", unknown>;
-    const originalCount = user.count;
-    const originalFind = user.findMany;
-    user.count = async () => 0;
-    user.findMany = async () => {
-      throw new Error("database unavailable");
-    };
+  it("returns a generic error when the database read fails", async () => {
+    const originalQuery = prisma.$queryRaw;
+    prisma.$queryRaw = () => { throw new Error("private database detail"); };
     try {
-      const response = await request(app)
-        .get("/saved-users")
-        .set("Cookie", cookie);
+      const response = await request(app).get("/database").set("Cookie", cookie);
       assert.equal(response.status, 503);
       assert.equal(response.body.data, null);
+      assert.ok(!JSON.stringify(response.body).includes("private database detail"));
     } finally {
-      user.count = originalCount;
-      user.findMany = originalFind;
+      prisma.$queryRaw = originalQuery;
     }
   });
 

@@ -9,6 +9,7 @@ import type { AccountType } from "@/lib/accountApi";
 
 type Preview = {
   files: {
+    id: string;
     name: string;
     type: string;
     totalRows: number;
@@ -19,6 +20,7 @@ type Preview = {
 };
 type Report = {
   files: {
+    id: string;
     name: string;
     type: string;
     totalParsed: number;
@@ -30,7 +32,7 @@ type Report = {
 };
 
 export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<{ id: string; file: File }[]>([]);
   const [payload, setPayload] = useState<ImportFile[] | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -38,12 +40,12 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const [savedType, setSavedType] = useState<AccountType>("student");
-  const input = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const message = (cause: unknown) =>
     cause instanceof Error ? cause.message : "Request failed. Please retry.";
 
   function selectFiles(next: File[]) {
-    setFiles(next);
+    setFiles(next.map(file => ({ id: crypto.randomUUID(), file })));
     setPayload(null);
     setPreview(null);
     setReport(null);
@@ -73,7 +75,7 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
         }
       }
       selectFiles(samples);
-      if (input.current) input.current.value = "";
+      if (inputRef.current) inputRef.current.value = "";
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -88,14 +90,14 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
     setReport(null);
     try {
       const { readImportFiles } = await import("./readImportFiles");
-      const parsed = await readImportFiles(files);
+      const parsed = await readImportFiles(files.map(({ file }) => file));
       const result = await api<Preview>("/imports/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ files: parsed }),
       });
       setPayload(parsed);
-      setPreview(result);
+      setPreview({ files: result.files.map(file => ({ ...file, id: crypto.randomUUID() })) });
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -107,13 +109,12 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
     setBusy(true);
     setError("");
     try {
-      setReport(
-        await api<Report>("/imports/save", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files: payload }),
-        }),
-      );
+      const result = await api<Report>("/imports/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: payload }),
+      });
+      setReport({ files: result.files.map(file => ({ ...file, id: crypto.randomUUID() })) });
       setPayload(null);
       setSavedType(
         payload.some((file) => file.type === "student") ? "student" : "staff",
@@ -162,7 +163,7 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
           <strong>Choose spreadsheets</strong>
           <span>CSV or Excel (.xlsx) · 5 MB and 1,000 rows per file</span>
           <input
-            ref={input}
+            ref={inputRef}
             aria-label="Spreadsheet files"
             type="file"
             multiple
@@ -175,8 +176,8 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
         </label>
         {files.length > 0 && (
           <ul>
-            {files.map((file, index) => (
-              <li key={index}>{file.name}</li>
+            {files.map(({ file, id }) => (
+              <li key={id}>{file.name}</li>
             ))}
           </ul>
         )}
@@ -250,8 +251,8 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
         )}
         {preview && (
           <div>
-            {preview.files.map((file, index) => (
-              <div className={styles.filePreview} key={index}>
+            {preview.files.map((file) => (
+              <div className={styles.filePreview} key={file.id}>
                 <h3>{file.name}</h3>
                 <p>
                   {file.totalRows} rows · {file.validCount} pass field
@@ -276,8 +277,8 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
       {report && (
         <section className={styles.card} aria-live="polite">
           <h2>Save results</h2>
-          {report.files.map((file, index) => (
-            <div className={styles.filePreview} key={index}>
+          {report.files.map((file) => (
+            <div className={styles.filePreview} key={file.id}>
               <h3>{file.name}</h3>
               <p>
                 {file.createdCount} created · {file.skippedCount} skipped ·{" "}
@@ -286,8 +287,8 @@ export default function ImportWorkspace({ onSaved }: { onSaved: () => void }) {
               {file.errors.length > 0 && (
                 <details>
                   <summary>Row results ({file.errors.length})</summary>
-                  {file.errors.map((row, i) => (
-                    <p key={i}>
+                  {file.errors.map((row) => (
+                    <p key={row.line}>
                       Row {row.line}: {row.errors.join("; ")}
                     </p>
                   ))}

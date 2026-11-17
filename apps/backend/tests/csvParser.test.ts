@@ -10,6 +10,17 @@ const staffHeaders =
   "lecturer_code,name,email,binusian_id,role,major_codes,password";
 
 describe("CSV parsing and row validation", () => {
+  it("accepts Excel semicolon CSVs and leaves semicolons in comma-delimited cells intact", async () => {
+    const regional = await parseAndValidateCsvBuffer(Buffer.from(
+      studentHeaders.replaceAll(",", ";") + '\n001;"Ana; Ada";ana@example.test;;CS;secret'
+    ), "student");
+    assert.equal(regional.validRows[0]?.data.name, "Ana; Ada");
+    assert.equal(regional.validRows[0]?.data.nim, "001");
+    const comma = await parseAndValidateCsvBuffer(Buffer.from(
+      staffHeaders + '\nL001,Lecturer,l@example.test,,Lecturer,CS;DS,secret'
+    ), "staff");
+    assert.equal(comma.validRows[0]?.data.major_codes, "CS;DS");
+  });
   it("rejects an empty buffer with the expected error", async () => {
     await assert.rejects(
       parseAndValidateCsvBuffer(Buffer.alloc(0), "student"),
