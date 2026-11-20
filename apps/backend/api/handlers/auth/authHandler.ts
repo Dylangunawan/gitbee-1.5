@@ -38,6 +38,7 @@ export default class AuthHandler {
             const schema = z.object({
                 identifier: z
                     .string()
+                    .max(1024, "Identifier is too long")
                     .trim()
                     .min(1, "NIM, email, or lecturer code is required")
                     .max(255)
@@ -46,7 +47,7 @@ export default class AuthHandler {
                         "Identifier must be an ASCII NIM, lecturer code, or valid email address"
                     )
                     .optional(),
-                email: z.string().trim().email().optional(),
+                email: z.string().max(1024).trim().email().optional(),
                 password: z.string().min(1).max(1024),
             }).refine((data) => Boolean(data.identifier || data.email), {
                 message: "NIM, email, or lecturer code is required",

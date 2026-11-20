@@ -42,10 +42,11 @@ function foldUnicodeDigits(value: string): string {
 }
 
 function getAccountKey(email: unknown): string {
-    if (typeof email !== "string") return "";
+    if (typeof email !== "string" || email.length > 1024) return "";
+    const trimmed = email.trim();
+    if (trimmed.length === 0 || trimmed.length > 255) return "";
     const normalized = foldUnicodeDigits(
-        email
-            .trim()
+        trimmed
             .normalize("NFKD")
             .replace(/\p{M}/gu, "")
     )

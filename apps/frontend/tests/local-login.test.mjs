@@ -69,7 +69,7 @@ test("loginLocal posts identifier and password with session credentials", async 
   }
 });
 
-// 2. Test LocalLoginForm Microsoft SSO fallback & /login callback completion ([P2])
+// 2. Test LocalLoginForm MSAL redirect handling, cached accounts, and session replacement
 const routerMockUrl = toDataUrl(`
   export const state = { pushes: [], replaces: [] };
   export const useRouter = () => ({
@@ -82,9 +82,10 @@ const msalMockUrl = toDataUrl(`
   export const state = {
     inProgress: "none",
     accounts: [],
+    activeAccount: null,
     redirects: [],
+    redirectPromiseResult: null,
     silentCalls: [],
-    silentResponse: { idToken: "ms-id-token", accessToken: "ms-access-token" },
   };
   export const useMsal = () => ({
     inProgress: state.inProgress,
@@ -93,9 +94,13 @@ const msalMockUrl = toDataUrl(`
       loginRedirect: async (req) => {
         state.redirects.push(req);
       },
+      handleRedirectPromise: async () => state.redirectPromiseResult,
+      setActiveAccount: (account) => {
+        state.activeAccount = account;
+      },
       acquireTokenSilent: async (req) => {
         state.silentCalls.push(req);
-        return state.silentResponse;
+        return { idToken: req.account?.idToken ?? "" };
       },
     },
   });
@@ -198,33 +203,50 @@ function findSsoButton() {
   return button;
 }
 
-test("Microsoft SSO fallback starts MSAL loginRedirect on a fresh session", async () => {
+test("plain /login visit with cached MSAL accounts keeps the credential form and does not auto-sign-in", async (t) => {
   routerMock.state.pushes.length = 0;
   routerMock.state.replaces.length = 0;
   msalMock.state.redirects.length = 0;
-  msalMock.state.accounts = [];
+  msalMock.state.silentCalls.length = 0;
+  msalMock.state.redirectPromiseResult = null;
+  msalMock.state.accounts = [
+    { username: "a@binus.edu", idToken: "token-a" },
+    { username: "b@binus.edu", idToken: "token-b" },
+  ];
   msalMock.state.inProgress = "none";
   authMock.state.userData = null;
+  authMock.state.updates.length = 0;
   libAuthMock.setBypassSso(false);
 
-  renderForm();
+  const backendCalls = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    backendCalls.push(url);
+    return Response.json({ status: true });
+  });
+
+  const html = renderForm();
+  assert.match(html, /NIM \/ Email \/ Lecturer Code/);
   await reactSpy.flushEffects();
+
+  assert.equal(backendCalls.length, 0);
+  assert.equal(msalMock.state.silentCalls.length, 0);
+  assert.equal(authMock.state.updates.length, 0);
+  assert.equal(routerMock.state.replaces.length, 0);
+
   const ssoButton = findSsoButton();
   await ssoButton.props.onClick();
-
   assert.deepEqual(msalMock.state.redirects, [
     { scopes: ["user.read"], prompt: "select_account" },
   ]);
-  assert.deepEqual(routerMock.state.pushes, []);
 });
 
 test("Microsoft SSO fallback routes to /login/microsoft when SSO bypass is enabled and ignores clicks while MSAL is busy", async () => {
   routerMock.state.pushes.length = 0;
   msalMock.state.redirects.length = 0;
   msalMock.state.accounts = [];
+  msalMock.state.redirectPromiseResult = null;
   authMock.state.userData = null;
 
-  // Busy MSAL interaction should no-op
   msalMock.state.inProgress = "login";
   libAuthMock.setBypassSso(false);
   renderForm();
@@ -234,7 +256,6 @@ test("Microsoft SSO fallback routes to /login/microsoft when SSO bypass is enabl
   assert.equal(msalMock.state.redirects.length, 0);
   assert.equal(routerMock.state.pushes.length, 0);
 
-  // Dev SSO bypass routes to /login/microsoft
   msalMock.state.inProgress = "none";
   libAuthMock.setBypassSso(true);
   renderForm();
@@ -244,27 +265,34 @@ test("Microsoft SSO fallback routes to /login/microsoft when SSO bypass is enabl
   assert.equal(msalMock.state.redirects.length, 0);
 });
 
-test("completes Microsoft sign-in and creates a GitBee session when returning to /login", async (t) => {
+test("MSAL redirect callback signs in the selected account B over cached account A and replaces an existing local session for A", async (t) => {
   const previous = process.env.NEXT_PUBLIC_BACKEND_API;
   process.env.NEXT_PUBLIC_BACKEND_API = "http://localhost:5001/api/";
 
   routerMock.state.pushes.length = 0;
   routerMock.state.replaces.length = 0;
   msalMock.state.silentCalls.length = 0;
-  authMock.state.userData = null;
+  msalMock.state.activeAccount = null;
   authMock.state.updates.length = 0;
+  // Existing local session for A must be replaced when Microsoft callback for B succeeds
+  authMock.state.userData = {
+    nim: "2702000001",
+    name: "USER A",
+    email: "a@binus.edu",
+    role: "Student",
+    listRole: ["Student"],
+    microsoftToken: "",
+  };
   libAuthMock.setBypassSso(false);
 
-  const account = {
-    homeAccountId: "home-1",
-    environment: "login.microsoftonline.com",
-    tenantId: "tenant-1",
-    username: "student@binus.edu",
-    localAccountId: "local-1",
-    idToken: "ms-id-token",
-  };
-  msalMock.state.accounts = [account];
+  const accountA = { username: "a@binus.edu", idToken: "token-a" };
+  const accountB = { username: "b@binus.edu", idToken: "token-b" };
+  msalMock.state.accounts = [accountA, accountB];
   msalMock.state.inProgress = "none";
+  msalMock.state.redirectPromiseResult = {
+    account: accountB,
+    idToken: "token-b",
+  };
 
   const backendCalls = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
@@ -272,46 +300,68 @@ test("completes Microsoft sign-in and creates a GitBee session when returning to
     return Response.json({
       status: true,
       data: {
-        nim: "2702000001",
-        Name: "Student User",
-        Email: "student@binus.edu",
-        ActiveRole: "Student",
-        Role: ["Student"],
-        MicrosoftToken: "ms-session-jwt",
+        nim: "D5002",
+        Name: "ADMIN B",
+        Email: "b@binus.edu",
+        ActiveRole: "Admin",
+        Role: ["Admin", "Lecturer"],
+        MicrosoftToken: "ms-session-b",
       },
     });
   });
 
   try {
-    const html = renderForm();
-    assert.match(html, /Completing Microsoft sign-in/);
+    renderForm();
     await reactSpy.flushEffects();
 
-    assert.equal(msalMock.state.silentCalls.length, 1);
-    assert.deepEqual(msalMock.state.silentCalls[0], {
-      account,
-      scopes: ["user.read"],
-    });
+    assert.equal(msalMock.state.activeAccount, accountB);
     assert.equal(backendCalls.length, 1);
     assert.equal(backendCalls[0].url, "http://localhost:5001/api/auth/login");
-    assert.equal(backendCalls[0].method, "POST");
-    assert.equal(backendCalls[0].credentials, "include");
     assert.deepEqual(JSON.parse(backendCalls[0].body), {
-      microsoft_token: "ms-id-token",
+      microsoft_token: "token-b",
     });
 
     assert.equal(authMock.state.updates.length, 1);
     assert.deepEqual(authMock.state.userData, {
-      nim: "2702000001",
-      name: "Student User",
-      email: "student@binus.edu",
-      role: "Student",
-      listRole: ["Student"],
-      microsoftToken: "ms-session-jwt",
+      nim: "D5002",
+      name: "ADMIN B",
+      email: "b@binus.edu",
+      role: "Admin",
+      listRole: ["Admin", "Lecturer"],
+      microsoftToken: "ms-session-b",
     });
-    assert.deepEqual(routerMock.state.replaces, ["/dashboard"]);
+    assert.deepEqual(routerMock.state.replaces, ["/dashboard-admin"]);
   } finally {
     if (previous === undefined) delete process.env.NEXT_PUBLIC_BACKEND_API;
     else process.env.NEXT_PUBLIC_BACKEND_API = previous;
+  }
+});
+
+test("next.config.mjs configures a 307 redirect from /login to /login/microsoft in production", async () => {
+  const { default: nextConfig } = await import("../next.config.mjs");
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevLocalLogin = process.env.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN;
+
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN;
+    assert.deepEqual(await nextConfig.redirects(), [
+      { source: "/login", destination: "/login/microsoft", permanent: false },
+    ]);
+
+    process.env.NODE_ENV = "development";
+    process.env.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN = "false";
+    assert.deepEqual(await nextConfig.redirects(), [
+      { source: "/login", destination: "/login/microsoft", permanent: false },
+    ]);
+
+    process.env.NODE_ENV = "development";
+    process.env.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN = "true";
+    assert.deepEqual(await nextConfig.redirects(), []);
+  } finally {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevLocalLogin === undefined) delete process.env.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN;
+    else process.env.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN = prevLocalLogin;
   }
 });

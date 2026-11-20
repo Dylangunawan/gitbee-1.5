@@ -9,8 +9,8 @@ import { dashboardPathForRole, SSO_BYPASS_ENABLED } from "@/lib/auth";
 
 export default function LocalLoginForm() {
   const router = useRouter();
-  const { userData, setUserData } = useAuth();
-  const { instance, inProgress, accounts } = useMsal();
+  const { setUserData } = useAuth();
+  const { instance, inProgress } = useMsal();
   const callbackStartedRef = useRef(false);
 
   const [identifier, setIdentifier] = useState("");
@@ -18,35 +18,44 @@ export default function LocalLoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCompletingCallback, setIsCompletingCallback] = useState(false);
 
   useEffect(() => {
-    if (
-      SSO_BYPASS_ENABLED ||
-      userData ||
-      inProgress !== "none" ||
-      accounts.length === 0 ||
-      callbackStartedRef.current
-    ) {
+    if (SSO_BYPASS_ENABLED || callbackStartedRef.current) {
       return;
     }
 
-    const account = accounts[0];
-    if (!account) return;
+    if (typeof instance.handleRedirectPromise !== "function") {
+      return;
+    }
 
     callbackStartedRef.current = true;
 
-    const completeMicrosoftLogin = async () => {
+    const completeMicrosoftRedirect = async () => {
       try {
-        const response = await instance.acquireTokenSilent({
-          account,
-          scopes: ["user.read"],
-        });
+        const redirectResult = await instance.handleRedirectPromise();
+        const selectedAccount = redirectResult?.account;
+        if (!selectedAccount) {
+          return;
+        }
 
-        if (!response) {
+        setIsCompletingCallback(true);
+        setError(null);
+        instance.setActiveAccount?.(selectedAccount);
+
+        let idToken = redirectResult.idToken ?? "";
+        if (!idToken) {
+          const tokenResponse = await instance.acquireTokenSilent({
+            account: selectedAccount,
+            scopes: ["user.read"],
+          });
+          idToken = tokenResponse?.idToken || selectedAccount.idToken || "";
+        }
+
+        if (!idToken) {
           throw new Error("Token acquisition failed");
         }
 
-        const idToken = response.idToken || account.idToken || "";
         const result = await login(idToken);
         if (result?.success) {
           setUserData({
@@ -60,18 +69,20 @@ export default function LocalLoginForm() {
 
           router.replace(dashboardPathForRole(result.data.ActiveRole) ?? "/");
         } else {
+          setIsCompletingCallback(false);
           setError(
             result?.message ?? "Microsoft sign-in failed. Please try again."
           );
         }
       } catch (err: unknown) {
         console.error("An error occurred during Microsoft sign-in:", err);
+        setIsCompletingCallback(false);
         setError("Unable to complete Microsoft sign-in. Please try again.");
       }
     };
 
-    void completeMicrosoftLogin();
-  }, [accounts, inProgress, instance, router, setUserData, userData]);
+    void completeMicrosoftRedirect();
+  }, [instance, router, setUserData]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -128,9 +139,6 @@ export default function LocalLoginForm() {
     }
   };
 
-  const completingMicrosoftCallback =
-    !SSO_BYPASS_ENABLED && !userData && accounts.length > 0 && !error;
-
   return (
     <div className="min-h-screen w-full bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-md border border-gray-100 p-8">
@@ -155,7 +163,7 @@ export default function LocalLoginForm() {
           </div>
         )}
 
-        {completingMicrosoftCallback ? (
+        {isCompletingCallback ? (
           <p className="py-8 text-center text-sm text-gray-600">
             Completing Microsoft sign-in...
           </p>
