@@ -4,6 +4,7 @@ import { createLocalToken, createToken, getLocalNim, getLocalRoles, parseJwt } f
 import { getErrorMessage, sendSuccessResponse, sendErrorResponse, ServiceError } from "../../utils/response/response.js";
 import AuthService from "../../services/auth/authService.js";
 import { isLocalLoginEnabled, isSsoBypassEnabled } from "../../utils/auth/devBypass.js";
+import { checkResolvedUserRateLimit } from "../../middlewares/loginRateLimitMiddleware.js";
 
 type LocalUser = NonNullable<Awaited<ReturnType<typeof AuthService.findLocalUser>>>;
 
@@ -32,38 +33,45 @@ export default class AuthHandler {
         }
 
         try {
-            const isAsciiIdentifierOrEmail = (value: string) =>
-                /^[A-Za-z0-9]+$/.test(value) || z.string().email().safeParse(value).success;
+         const isAsciiIdentifierOrEmail = (value: string) =>
+             /^[A-Za-z0-9._-]+$/.test(value) || z.string().email().safeParse(value).success;
 
-            const schema = z.object({
-                identifier: z
-                    .string()
-                    .max(1024, "Identifier is too long")
-                    .trim()
-                    .min(1, "NIM, email, or lecturer code is required")
-                    .max(255)
-                    .refine(
-                        isAsciiIdentifierOrEmail,
-                        "Identifier must be an ASCII NIM, lecturer code, or valid email address"
-                    )
-                    .optional(),
-                email: z.string().max(1024).trim().email().optional(),
-                password: z.string().min(1).max(1024),
-            }).refine((data) => Boolean(data.identifier || data.email), {
-                message: "NIM, email, or lecturer code is required",
-                path: ["identifier"],
-            });
+         const schema = z.object({
+             identifier: z
+                 .string()
+                 .max(1024, "Identifier is too long")
+                 .trim()
+                 .min(1, "NIM, email, or lecturer code is required")
+                 .max(255)
+                 .refine(
+                     isAsciiIdentifierOrEmail,
+                     "Identifier must be an ASCII NIM, lecturer code, or valid email address"
+                 )
+                 .optional(),
+             email: z.string().max(1024).trim().email().optional(),
+             password: z.string().min(1).max(1024),
+         }).refine((data) => Boolean(data.identifier || data.email), {
+             message: "NIM, email, or lecturer code is required",
+             path: ["identifier"],
+         });
 
-            const valid = schema.safeParse(req.body);
-            if (!valid.success) {
-                return sendErrorResponse(res, valid.error.issues[0]?.message ?? "Invalid request body", 400);
-            }
+         const valid = schema.safeParse(req.body);
+         if (!valid.success) {
+             return sendErrorResponse(res, valid.error.issues[0]?.message ?? "Invalid request body", 400);
+         }
 
-            const identifier = (valid.data.identifier ?? valid.data.email ?? "").trim();
-            const user = await AuthService.verifyLocalLogin(identifier, valid.data.password);
-            if (!user) {
-                return sendErrorResponse(res, "Invalid credentials", 401);
-            }
+         const identifier = (valid.data.identifier ?? valid.data.email ?? "").trim();
+         const user = await AuthService.verifyLocalLogin(
+             identifier,
+             valid.data.password,
+             (userId) => checkResolvedUserRateLimit(res, userId)
+         );
+         if (res.headersSent) {
+             return;
+         }
+         if (!user) {
+             return sendErrorResponse(res, "Invalid credentials", 401);
+         }
 
             const roles = getLocalRoles(user);
             if (roles.length === 0) {

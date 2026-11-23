@@ -24,7 +24,11 @@ export default class AuthService {
      * or null. Unknown accounts and accounts without a password still pay for
      * one hash, so response time doesn't reveal which identifiers exist.
      */
-    static async verifyLocalLogin(identifier: string, password: string) {
+    static async verifyLocalLogin(
+        identifier: string,
+        password: string,
+        onUserResolved?: (userId: number) => boolean
+    ) {
         const trimmed = identifier.trim();
         if (!trimmed) {
             await verifyPassword(password, DUMMY_PASSWORD_HASH);
@@ -48,6 +52,10 @@ export default class AuthService {
 
         if (!user) {
             await verifyPassword(password, DUMMY_PASSWORD_HASH);
+            return null;
+        }
+
+        if (onUserResolved?.(user.id)) {
             return null;
         }
 

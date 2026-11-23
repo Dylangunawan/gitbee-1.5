@@ -260,6 +260,7 @@ describe("local authentication routes", () => {
     assert.equal(credentialReads, 5);
 
     // 2. Non-email identifiers (NIM and case-insensitive lecturer code) are also throttled per account across IPs
+    user = { ...staff, id: 41, email: "throttled41@example.com", lecturer_code: "D5040" };
     credentialReads = 0;
     for (let index = 0; index < 5; index += 1) {
       const attempt = await request(app)
@@ -281,7 +282,6 @@ describe("local authentication routes", () => {
     user = { ...staff, id: 50, email: "student50@example.com", student_id: "2702000050" };
     stub(prisma.user, "findFirst", async () => ({ ...user, credential_version: credentialVersion }));
 
-    // 1. Non-ASCII digit spellings are rejected before querying the database
     for (const nonAscii of [
       "\u0662\u0667\u0660\u0662\u0660\u0660\u0660\u0660\u0665\u0661",
       "\u0968\u096d\u0966\u0968\u0966\u0966\u0966\u0966\u096b\u0961",
@@ -295,7 +295,6 @@ describe("local authentication routes", () => {
     }
     assert.equal(credentialReads, 0);
 
-    // 2. Five failures on the ASCII NIM also block non-ASCII digit spellings in the rate limiter
     for (let index = 0; index < 5; index += 1) {
       const attempt = await request(app)
         .post("/auth/login-local")
@@ -312,5 +311,40 @@ describe("local authentication routes", () => {
       });
     assert.equal(bypassAttempt.status, 429);
     assert.equal(credentialReads, 5);
+  });
+
+  it("accepts ASCII lecturer codes containing hyphens such as WB23-1", async () => {
+    user = { ...staff, id: 45, email: "wb23@example.com", lecturer_code: "WB23-1" };
+    stub(prisma.user, "findFirst", async () => ({ ...user, credential_version: credentialVersion }));
+
+    const response = await request(app)
+      .post("/auth/login-local")
+      .set("X-Forwarded-For", "198.51.100.180")
+      .send({ identifier: "WB23-1", password: originalPassword });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.nim, "WB23-1");
+  });
+
+  it("shares the account lockout bucket across email and NIM/lecturer code for the same user", async () => {
+    user = { ...staff, id: 60, role: "Student", email: "student60@example.com", student_id: "2702000060" };
+    stub(prisma.user, "findUnique", async () => ({ ...user, credential_version: credentialVersion }));
+    stub(prisma.user, "findFirst", async () => ({ ...user, credential_version: credentialVersion }));
+
+    for (let index = 0; index < 5; index += 1) {
+      const attempt = await request(app)
+        .post("/auth/login-local")
+        .set("X-Forwarded-For", `198.51.100.${index + 120}`)
+        .send({ identifier: user.email, password: "wrong-password" });
+      assert.equal(attempt.status, 401);
+    }
+
+    const nimAttempt = await request(app)
+      .post("/auth/login-local")
+      .set("X-Forwarded-For", "198.51.100.150")
+      .send({ identifier: user.student_id, password: originalPassword });
+
+    assert.equal(nimAttempt.status, 429);
+    assert.ok(Number(nimAttempt.headers["retry-after"]) > 0);
   });
 });

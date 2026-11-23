@@ -76,6 +76,7 @@ const backendLines = [
   `SEED_DUMMY_STUDENTS=${values.SEED_DUMMY_STUDENTS || "0"}`,
   `SEED_DUMMY_STAFF=${values.SEED_DUMMY_STAFF || "0"}`,
   `BYPASS_SSO=${values.BYPASS_SSO || "false"}`,
+  `ENABLE_LOCAL_LOGIN=${values.ENABLE_LOCAL_LOGIN || "true"}`,
 ];
 
 const frontendLines = [
@@ -89,6 +90,7 @@ const frontendLines = [
   `NEXT_PUBLIC_CACHE_LOCATION=${values.NEXT_PUBLIC_CACHE_LOCATION || "sessionStorage"}`,
   `NEXT_PUBLIC_COOKIE_NAME=${values.COOKIE_NAME || "gitbee_token"}`,
   `NEXT_PUBLIC_BYPASS_SSO=${values.BYPASS_SSO || "false"}`,
+  `NEXT_PUBLIC_ENABLE_LOCAL_LOGIN=${values.NEXT_PUBLIC_ENABLE_LOCAL_LOGIN || "true"}`,
 ];
 
 writeEnvFile(backendEnvPath, backendLines);

@@ -7,6 +7,10 @@ type AttemptEntry = {
     pending: number;
 };
 
+type ResolvedUserRateLimitChecker = (userId: number) => boolean;
+
+const resolvedUserCheckers = new WeakMap<Response, ResolvedUserRateLimitChecker>();
+
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_IP_FAILURES = 20;
 const MAX_ACCOUNT_FAILURES = 5;
@@ -161,6 +165,41 @@ export function createLoginRateLimitMiddleware(options: {
             });
 
             for (const { entry } of entries) entry.pending += 1;
+
+            const trackedUserIds = new Set<number>();
+            resolvedUserCheckers.set(res, (userId: number): boolean => {
+                const userKey = `user:${userId}`;
+                const checkNow = Date.now();
+                let userEntry = attempts.get(userKey);
+                if (userEntry && userEntry.pending === 0 && checkNow - userEntry.windowStartedAt >= windowMs) {
+                    attempts.delete(userKey);
+                    userEntry = undefined;
+                }
+                if (userEntry && userEntry.failures + userEntry.pending >= maxAccountFailures) {
+                    res.set(
+                        "Retry-After",
+                        String(Math.max(1, Math.ceil((userEntry.windowStartedAt + windowMs - checkNow) / 1000)))
+                    );
+                    sendErrorResponse(res, "Too many login attempts. Please try again later.", 429);
+                    return true;
+                }
+                if (!trackedUserIds.has(userId)) {
+                    if (!userEntry) {
+                        if (attempts.size + 1 > maxEntries) {
+                            res.set("Retry-After", String(Math.ceil(windowMs / 1000)));
+                            sendErrorResponse(res, "Login temporarily unavailable. Please try again later.", 429);
+                            return true;
+                        }
+                        userEntry = { windowStartedAt: checkNow, failures: 0, pending: 0 };
+                        attempts.set(userKey, userEntry);
+                    }
+                    trackedUserIds.add(userId);
+                    userEntry.pending += 1;
+                    entries.push({ entry: userEntry });
+                }
+                return false;
+            });
+
             let completed = false;
             let handlerFinished = false;
             let responseFinished = false;
@@ -198,4 +237,9 @@ export function createLoginRateLimitMiddleware(options: {
     return Object.assign(middleware, {
         getTrackedEntryCount: () => attempts.size,
     });
+}
+
+export function checkResolvedUserRateLimit(res: Response, userId: number): boolean {
+    const checker = resolvedUserCheckers.get(res);
+    return checker ? checker(userId) : false;
 }
