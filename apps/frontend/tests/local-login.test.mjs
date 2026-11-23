@@ -69,7 +69,7 @@ test("loginLocal posts identifier and password with session credentials", async 
   }
 });
 
-// 2. Test LocalLoginForm MSAL redirect handling, cached accounts, and session replacement
+// 2. Test LocalLoginForm MSAL initialization boundary, redirect handling, and session replacement
 const routerMockUrl = toDataUrl(`
   export const state = { pushes: [], replaces: [] };
   export const useRouter = () => ({
@@ -80,11 +80,13 @@ const routerMockUrl = toDataUrl(`
 
 const msalMockUrl = toDataUrl(`
   export const state = {
+    initialized: true,
     inProgress: "none",
     accounts: [],
     activeAccount: null,
     redirects: [],
     redirectPromiseResult: null,
+    handleRedirectCalls: 0,
     silentCalls: [],
   };
   export const useMsal = () => ({
@@ -94,7 +96,13 @@ const msalMockUrl = toDataUrl(`
       loginRedirect: async (req) => {
         state.redirects.push(req);
       },
-      handleRedirectPromise: async () => state.redirectPromiseResult,
+      handleRedirectPromise: async () => {
+        state.handleRedirectCalls += 1;
+        if (!state.initialized || state.inProgress === "startup") {
+          throw new Error("uninitialized_public_client_application");
+        }
+        return state.redirectPromiseResult;
+      },
       setActiveAccount: (account) => {
         state.activeAccount = account;
       },
@@ -125,13 +133,56 @@ const libAuthMockUrl = toDataUrl(`
 `);
 
 const reactSpyUrl = toDataUrl(`
-  import React, { useState, useRef } from ${JSON.stringify(
-    import.meta.resolve("react")
-  )};
+  import React from ${JSON.stringify(import.meta.resolve("react"))};
   export const pendingEffects = [];
-  export function useEffect(effect) {
-    pendingEffects.push(effect);
+  let hookSlots = [];
+  let hookCursor = 0;
+
+  export function resetHooks() {
+    hookSlots = [];
+    hookCursor = 0;
+    pendingEffects.length = 0;
   }
+
+  export function beginRender() {
+    hookCursor = 0;
+    pendingEffects.length = 0;
+  }
+
+  export function useState(initial) {
+    const idx = hookCursor++;
+    if (!(idx in hookSlots)) {
+      hookSlots[idx] = typeof initial === "function" ? initial() : initial;
+    }
+    const setState = (updater) => {
+      hookSlots[idx] =
+        typeof updater === "function" ? updater(hookSlots[idx]) : updater;
+    };
+    return [hookSlots[idx], setState];
+  }
+
+  export function useRef(initial) {
+    const idx = hookCursor++;
+    if (!(idx in hookSlots)) {
+      hookSlots[idx] = { current: initial };
+    }
+    return hookSlots[idx];
+  }
+
+  export function useEffect(effect, deps) {
+    const idx = hookCursor++;
+    const prevDeps = hookSlots[idx];
+    const changed =
+      !prevDeps ||
+      !deps ||
+      deps.length !== prevDeps.length ||
+      deps.some((dep, i) => !Object.is(dep, prevDeps[i]));
+    if (changed) {
+      hookSlots[idx] = deps;
+      pendingEffects.push(effect);
+    }
+  }
+
   export async function flushEffects() {
     while (pendingEffects.length > 0) {
       const effect = pendingEffects.shift();
@@ -139,7 +190,7 @@ const reactSpyUrl = toDataUrl(`
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  export { useState, useRef };
+
   export default { ...React, useState, useRef, useEffect };
 `);
 
@@ -187,10 +238,15 @@ const reactSpy = await import(reactSpyUrl);
 const jsxSpy = await import(jsxRuntimeSpyUrl);
 const { jsx } = await import("react/jsx-runtime");
 
-function renderForm() {
+function rerenderForm() {
   jsxSpy.elements.length = 0;
-  reactSpy.pendingEffects.length = 0;
+  reactSpy.beginRender();
   return renderToStaticMarkup(jsx(LocalLoginForm, {}));
+}
+
+function mountForm() {
+  reactSpy.resetHooks();
+  return rerenderForm();
 }
 
 function findSsoButton() {
@@ -208,11 +264,13 @@ test("plain /login visit with cached MSAL accounts keeps the credential form and
   routerMock.state.replaces.length = 0;
   msalMock.state.redirects.length = 0;
   msalMock.state.silentCalls.length = 0;
+  msalMock.state.handleRedirectCalls = 0;
   msalMock.state.redirectPromiseResult = null;
   msalMock.state.accounts = [
     { username: "a@binus.edu", idToken: "token-a" },
     { username: "b@binus.edu", idToken: "token-b" },
   ];
+  msalMock.state.initialized = true;
   msalMock.state.inProgress = "none";
   authMock.state.userData = null;
   authMock.state.updates.length = 0;
@@ -224,10 +282,11 @@ test("plain /login visit with cached MSAL accounts keeps the credential form and
     return Response.json({ status: true });
   });
 
-  const html = renderForm();
+  const html = mountForm();
   assert.match(html, /NIM \/ Email \/ Lecturer Code/);
   await reactSpy.flushEffects();
 
+  assert.equal(msalMock.state.handleRedirectCalls, 1);
   assert.equal(backendCalls.length, 0);
   assert.equal(msalMock.state.silentCalls.length, 0);
   assert.equal(authMock.state.updates.length, 0);
@@ -247,9 +306,10 @@ test("Microsoft SSO fallback routes to /login/microsoft when SSO bypass is enabl
   msalMock.state.redirectPromiseResult = null;
   authMock.state.userData = null;
 
+  msalMock.state.initialized = true;
   msalMock.state.inProgress = "login";
   libAuthMock.setBypassSso(false);
-  renderForm();
+  mountForm();
   const busyButton = findSsoButton();
   assert.equal(busyButton.props.disabled, true);
   await busyButton.props.onClick();
@@ -258,23 +318,23 @@ test("Microsoft SSO fallback routes to /login/microsoft when SSO bypass is enabl
 
   msalMock.state.inProgress = "none";
   libAuthMock.setBypassSso(true);
-  renderForm();
+  mountForm();
   const bypassButton = findSsoButton();
   await bypassButton.props.onClick();
   assert.deepEqual(routerMock.state.pushes, ["/login/microsoft"]);
   assert.equal(msalMock.state.redirects.length, 0);
 });
 
-test("MSAL redirect callback signs in the selected account B over cached account A and replaces an existing local session for A", async (t) => {
+test("waits for MSAL startup to reach none before consuming redirect callback and exchanges selected account once", async (t) => {
   const previous = process.env.NEXT_PUBLIC_BACKEND_API;
   process.env.NEXT_PUBLIC_BACKEND_API = "http://localhost:5001/api/";
 
   routerMock.state.pushes.length = 0;
   routerMock.state.replaces.length = 0;
   msalMock.state.silentCalls.length = 0;
+  msalMock.state.handleRedirectCalls = 0;
   msalMock.state.activeAccount = null;
   authMock.state.updates.length = 0;
-  // Existing local session for A must be replaced when Microsoft callback for B succeeds
   authMock.state.userData = {
     nim: "2702000001",
     name: "USER A",
@@ -288,11 +348,14 @@ test("MSAL redirect callback signs in the selected account B over cached account
   const accountA = { username: "a@binus.edu", idToken: "token-a" };
   const accountB = { username: "b@binus.edu", idToken: "token-b" };
   msalMock.state.accounts = [accountA, accountB];
-  msalMock.state.inProgress = "none";
   msalMock.state.redirectPromiseResult = {
     account: accountB,
     idToken: "token-b",
   };
+
+  // Start uninitialized in "startup" state (matching fresh page load before MsalProvider effect runs)
+  msalMock.state.initialized = false;
+  msalMock.state.inProgress = "startup";
 
   const backendCalls = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
@@ -311,9 +374,20 @@ test("MSAL redirect callback signs in the selected account B over cached account
   });
 
   try {
-    renderForm();
+    // 1. Initial mount during "startup": must NOT call handleRedirectPromise yet
+    mountForm();
+    await reactSpy.flushEffects();
+    assert.equal(msalMock.state.handleRedirectCalls, 0);
+    assert.equal(backendCalls.length, 0);
+
+    // 2. MSAL finishes initialization and transitions inProgress to "none" on the same component instance
+    msalMock.state.initialized = true;
+    msalMock.state.inProgress = "none";
+    const loadingHtml = rerenderForm();
+    assert.match(loadingHtml, /NIM \/ Email \/ Lecturer Code/);
     await reactSpy.flushEffects();
 
+    assert.equal(msalMock.state.handleRedirectCalls, 1);
     assert.equal(msalMock.state.activeAccount, accountB);
     assert.equal(backendCalls.length, 1);
     assert.equal(backendCalls[0].url, "http://localhost:5001/api/auth/login");
@@ -331,6 +405,13 @@ test("MSAL redirect callback signs in the selected account B over cached account
       microsoftToken: "ms-session-b",
     });
     assert.deepEqual(routerMock.state.replaces, ["/dashboard-admin"]);
+
+    // 3. Subsequent re-renders after readiness must not exchange the callback a second time
+    const completingHtml = rerenderForm();
+    assert.match(completingHtml, /Completing Microsoft sign-in/);
+    await reactSpy.flushEffects();
+    assert.equal(msalMock.state.handleRedirectCalls, 1);
+    assert.equal(backendCalls.length, 1);
   } finally {
     if (previous === undefined) delete process.env.NEXT_PUBLIC_BACKEND_API;
     else process.env.NEXT_PUBLIC_BACKEND_API = previous;

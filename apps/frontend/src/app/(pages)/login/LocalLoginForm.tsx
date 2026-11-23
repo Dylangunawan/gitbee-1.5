@@ -21,7 +21,11 @@ export default function LocalLoginForm() {
   const [isCompletingCallback, setIsCompletingCallback] = useState(false);
 
   useEffect(() => {
-    if (SSO_BYPASS_ENABLED || callbackStartedRef.current) {
+    if (
+      SSO_BYPASS_ENABLED ||
+      inProgress !== "none" ||
+      callbackStartedRef.current
+    ) {
       return;
     }
 
@@ -82,7 +86,7 @@ export default function LocalLoginForm() {
     };
 
     void completeMicrosoftRedirect();
-  }, [instance, router, setUserData]);
+  }, [inProgress, instance, router, setUserData]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
