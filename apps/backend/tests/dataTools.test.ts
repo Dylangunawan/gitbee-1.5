@@ -66,11 +66,11 @@ describe("Admin data workspace", () => {
     });
     assert.equal(
       (await request(app).get("/database").set("Cookie", cookie)).status,
-      403,
+      401,
     );
     assert.equal(
       (await request(app).post("/imports/save").set("Cookie", cookie)).status,
-      403,
+      401,
     );
   });
   it("rejects removed endpoints and invalid database requests", async () => {
@@ -189,7 +189,7 @@ describe("Admin data workspace", () => {
           .set("Cookie", cookie)
           .send({ files: [] })
       ).status,
-      403,
+      401,
     );
   });
 

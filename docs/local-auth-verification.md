@@ -19,7 +19,7 @@ Access is based on assigned membership, not only `activeRole`. Switching roles c
 - Student prefix rules previously admitted staff paths such as `/dashboard-admin` and `/course-lecturer`. Segment boundaries now distinguish those routes.
 - The profile matcher explicitly includes descendants such as `/profile/2702000001`.
 - Expired JWTs no longer restore a signed-in frontend state or pass the frontend guard.
-- The header uses a tested role-switch action: local/bypass sessions send only `{ role }` with the cookie; Microsoft sessions retain `/auth/login` with `microsoft_token`.
+- The header uses a tested role-switch action: local, bypass and Microsoft sessions send only `{ role }` to `POST /api/auth/session/role` with the session cookie.
 - Failed switches show an error and retain the current context/cookie. Local logout clears the session and returns home without an MSAL logout redirect.
 
 ## Repeatable checks

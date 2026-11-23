@@ -24,14 +24,14 @@ test("loginLocal posts identifier and password with session credentials", async 
   const calls = [];
   let response = Response.json({
     status: true,
-    data: {
+    data: { session: {
       nim: "2702000001",
-      Name: "Student",
-      Email: "student@binus.edu",
-      ActiveRole: "Student",
-      Role: ["Student"],
-      MicrosoftToken: "",
-    },
+      name: "Student",
+      email: "student@binus.edu",
+      activeRole: "Student",
+      roles: ["Student"],
+      authMethod: "local",
+    } },
   });
 
   t.mock.method(globalThis, "fetch", async (url, options) => {
@@ -115,11 +115,11 @@ const msalMockUrl = toDataUrl(`
 `);
 
 const authContextMockUrl = toDataUrl(`
-  export const state = { userData: null, updates: [] };
+  export const state = { session: null, updates: [] };
   export const useAuth = () => ({
-    userData: state.userData,
-    setUserData: (next) => {
-      state.userData = next;
+    session: state.session,
+    setSession: (next) => {
+      state.session = next;
       state.updates.push(next);
     },
   });
@@ -272,7 +272,7 @@ test("plain /login visit with cached MSAL accounts keeps the credential form and
   ];
   msalMock.state.initialized = true;
   msalMock.state.inProgress = "none";
-  authMock.state.userData = null;
+  authMock.state.session = null;
   authMock.state.updates.length = 0;
   libAuthMock.setBypassSso(false);
 
@@ -304,7 +304,7 @@ test("Microsoft SSO fallback routes to /login/microsoft when SSO bypass is enabl
   msalMock.state.redirects.length = 0;
   msalMock.state.accounts = [];
   msalMock.state.redirectPromiseResult = null;
-  authMock.state.userData = null;
+  authMock.state.session = null;
 
   msalMock.state.initialized = true;
   msalMock.state.inProgress = "login";
@@ -335,13 +335,13 @@ test("waits for MSAL startup to reach none before consuming redirect callback an
   msalMock.state.handleRedirectCalls = 0;
   msalMock.state.activeAccount = null;
   authMock.state.updates.length = 0;
-  authMock.state.userData = {
+  authMock.state.session = {
     nim: "2702000001",
     name: "USER A",
     email: "a@binus.edu",
-    role: "Student",
-    listRole: ["Student"],
-    microsoftToken: "",
+    activeRole: "Student",
+    roles: ["Student"],
+    authMethod: "local",
   };
   libAuthMock.setBypassSso(false);
 
@@ -362,14 +362,14 @@ test("waits for MSAL startup to reach none before consuming redirect callback an
     backendCalls.push({ url, ...options });
     return Response.json({
       status: true,
-      data: {
+      data: { session: {
         nim: "D5002",
-        Name: "ADMIN B",
-        Email: "b@binus.edu",
-        ActiveRole: "Admin",
-        Role: ["Admin", "Lecturer"],
-        MicrosoftToken: "ms-session-b",
-      },
+        name: "ADMIN B",
+        email: "b@binus.edu",
+        activeRole: "Admin",
+        roles: ["Admin", "Lecturer"],
+        authMethod: "sso",
+      } },
     });
   });
 
@@ -396,13 +396,13 @@ test("waits for MSAL startup to reach none before consuming redirect callback an
     });
 
     assert.equal(authMock.state.updates.length, 1);
-    assert.deepEqual(authMock.state.userData, {
+    assert.deepEqual(authMock.state.session, {
       nim: "D5002",
       name: "ADMIN B",
       email: "b@binus.edu",
-      role: "Admin",
-      listRole: ["Admin", "Lecturer"],
-      microsoftToken: "ms-session-b",
+      activeRole: "Admin",
+      roles: ["Admin", "Lecturer"],
+      authMethod: "sso",
     });
     assert.deepEqual(routerMock.state.replaces, ["/dashboard-admin"]);
 

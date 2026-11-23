@@ -9,5 +9,7 @@ apps/frontend/out/
 .DS_Store
 .turbo/
 .agents/
+.claude/
 skills-lock.json
 .demo/
+skills/

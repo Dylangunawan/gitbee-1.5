@@ -204,7 +204,7 @@ describe("local authentication routes", () => {
     assert.equal(passwordWrites, 0);
   });
 
-  it("serves the role-switch contract with refreshed database membership and claims", async () => {
+  it("serves the legacy role-switch contract and rejects stale membership", async () => {
     for (const role of ["Admin", "SCC", "HoP"]) {
       user = { ...staff, role };
       const response = await request(app).post("/auth/login-local/role")
@@ -213,6 +213,10 @@ describe("local authentication routes", () => {
       assert.deepEqual(response.body.data, {
         nim: "D5001", Name: "STAFF", Email: staff.email,
         Role: [role, "Lecturer"], ActiveRole: "Lecturer", MicrosoftToken: "",
+        session: {
+          nim: "D5001", name: "STAFF", email: staff.email,
+          roles: [role, "Lecturer"], activeRole: "Lecturer", authMethod: "local",
+        },
       });
       const cookie = response.headers["set-cookie"]![0]!;
       const claims = jwt.verify(cookie.split(";")[0]!.slice("gitbee_token=".length), process.env.JWT_SECRET!) as jwt.JwtPayload;
@@ -224,8 +228,8 @@ describe("local authentication routes", () => {
     }
     const staleCookie = session();
     user = { ...staff, role: "Student", user_type: "student" };
-    assert.equal((await request(app).post("/auth/login-local/role").set("Cookie", staleCookie).send({ role: "Lecturer" })).status, 403);
-    assert.equal((await request(app).post("/auth/login-local/role").set("Cookie", staleCookie).send({ role: "Admin" })).status, 403);
+    assert.equal((await request(app).post("/auth/login-local/role").set("Cookie", staleCookie).send({ role: "Lecturer" })).status, 401);
+    assert.equal((await request(app).post("/auth/login-local/role").set("Cookie", staleCookie).send({ role: "Admin" })).status, 401);
   });
 
   it("rejects invalid role-switch sessions, unknown roles, malformed input, and deleted users", async () => {
